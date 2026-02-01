@@ -67,6 +67,27 @@ This enables the Native Messaging connection between Chrome and Python.
 *   **News Filtering**: In the News Panel, toggle `[x] FILTER` to see only news relevant to your active stock.
 *   **Settlement Logic**: Trades placed now will automatically calculate T+2 settlement dates (skipping weekends/holidays).
 
+## 📚 Knowledge Base: FDC3 Intents
+This project relies heavily on the **Financial Desktop Connectivity and Collaboration Consortium (FDC3)** standard to pass context between the App and the AI Extension.
+
+*   `fdc3.instrument` (Context): Represents a financial instrument (e.g., `{"type": "fdc3.instrument", "id": {"ticker": "AAPL"}}`). The AI monitors this to know what you are analyzing.
+*   `fdc3.order` (Context): Represents a trade orders. We use this to trigger compliance checks.
+*   `ViewInstrument` (Intent): Used when you click a stock in the Watchlist.
+*   `ViewNews` (Intent): Used to filter the news feed for specific instruments.
+
+## 🧠 How it Works: Simple RAG
+We use a lightweight **Retrieval-Augmented Generation (RAG)** approach without a heavy vector database:
+
+1.  **Event Stream**: The Chrome Extension acts as a "Sniffer", capturing every FDC3 broadcast via `window.postMessage`.
+2.  **Sticky Context**: The Analyst script maintains a rolling buffer of 50 events. Crucially, it "sticks" important contexts (like your Portfolio snapshot) to the top of the context window, so the AI never forgets what you own, even if the log is old.
+3.  **Prompt Injection**: When you ask a question, we inject the specific active JSON context directly into the System Prompt of the LLM, giving it "perfect memory" of the current state.
+
+## 🔗 Acknowledgements & FDC3 Projects
+This project simulates an agent capable of interacting with the open FDC3 ecosystem.
+*   **FDC3 Standard**: [finos.org/fdc3](https://finos.org/fdc3)
+*   **FDC3 Sail**: A robust FDC3 Desktop Agent implementation.
+*   **FDC3 Workbench**: Tool for testing FDC3 context compliance.
+
 ## ⚙️ Configuration
 *   **Change LLM**: Click the ⚙️ Settings icon in the Web App or Extension.
     *   **Local**: Set URL to `http://localhost:8081`.
