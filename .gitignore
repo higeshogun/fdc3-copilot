@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# JavaScript / Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
+analyst/sessions/
+*.log
+c:/temp/
+
+# Large builds (if applicable)
+dist/
+build/
+
+# Reference / External Repos
+fdc3-context-gallery/
+fdc3-grid-demo/
+fdc3-sail/
+fdc3-spec/
+reference_tablewise/

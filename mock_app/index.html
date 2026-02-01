@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interop AI Trader OMS</title>
+    <link rel="stylesheet" href="style.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&family=Inter:wght@300;400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        @keyframes flashGreen {
+            from {
+                background-color: rgba(0, 255, 136, 0.3);
+            }
+
+            to {
+                background-color: transparent;
+            }
+        }
+
+        @keyframes flashRed {
+            from {
+                background-color: rgba(255, 68, 68, 0.3);
+            }
+
+            to {
+                background-color: transparent;
+            }
+        }
+
+        .flash-up {
+            animation: flashGreen 0.5s;
+        }
+
+        .flash-down {
+            animation: flashRed 0.5s;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="oms-container">
+        <!-- Header -->
+        <header>
+            <div class="brand">INTEROP<span class="highlight">.TRADER</span></div>
+            <div class="header-controls">
+                <button class="btn-theme-toggle" onclick="toggleTheme()" title="Toggle Theme">🌓</button>
+                <button class="btn-layout-toggle" onclick="toggleLayout()" title="Switch Layout">🔲</button>
+                <div id="connection-status" class="connection-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">FDC3 READY</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-layout">
+            <!-- LEFT COLUMN: Market Data & Watchlist -->
+            <div class="column left-panel">
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                        WATCHLIST
+                    </div>
+                    <div class="watchlist-grid">
+                        <div class="row header-row" id="wl-header">
+                            <span onclick="sortGrid('watchlist', 'sym')">SYM</span>
+                            <span onclick="sortGrid('watchlist', 'last')">LAST</span>
+                            <span onclick="sortGrid('watchlist', 'chg')">CHG</span>
+                        </div>
+                        <div id="watchlist-body">
+                            <!-- Populated via JS -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel chart-panel">
+                    <div class="panel-header">
+                        <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                        PRICE CHART (<span id="chart-symbol">AAPL</span>)
+                    </div>
+                    <div class="chart-container"
+                        style="height: 151px; background: #111; position: relative; overflow: hidden;">
+                        <canvas id="price-chart" width="400" height="150"></canvas>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header"
+                        style="display:flex; justify-content:space-between; align-items:center; padding-right:10px;">
+                        <div>
+                            <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                            NEWS FEED
+                        </div>
+                        <label style="font-size:10px; display:flex; gap:4px; align-items:center; cursor:pointer;">
+                            <input type="checkbox" id="news-filter-toggle" onchange="toggleNewsFilter(this)"> FILTER
+                        </label>
+                    </div>
+                    <ul class="news-list" id="news-list">
+                        <!-- Populated via JS -->
+                    </ul>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                        SALES CONTACTS
+                    </div>
+                    <div class="watchlist-grid">
+                        <div class="row" onclick="contactSales('Jane Doe')">
+                            <span class="symbol">Jane Doe</span>
+                            <span class="price">EQUITY</span>
+                            <span class="change">CHAT</span>
+                        </div>
+                        <div class="row" onclick="contactSales('John Smith')">
+                            <span class="symbol">John Smith</span>
+                            <span class="price">FX/FI</span>
+                            <span class="change">CHAT</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: Order Entry & Blotter -->
+            <div class="column right-panel">
+                <!-- SIDE-BY-SIDE TRADE ROW -->
+                <div class="trade-row">
+                    <!-- QUOTE TILE -->
+                    <div class="panel quote-tile">
+                        <div class="panel-header">
+                            <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                            QUICK TRADE: <span id="qt-symbol">AAPL</span>
+                        </div>
+                        <div class="quote-body">
+                            <div class="quote-side sell" onclick="submitQuickOrder('SELL')">
+                                <div class="label">BID</div>
+                                <div class="price" id="quote-bid">189.48</div>
+                                <div class="size">500</div>
+                            </div>
+                            <div class="quote-side buy" onclick="submitQuickOrder('BUY')">
+                                <div class="label">ASK</div>
+                                <div class="price" id="quote-ask">189.52</div>
+                                <div class="size">750</div>
+                            </div>
+                        </div>
+                        <div id="market-depth" class="market-depth">
+                            <!-- Filled via JS -->
+                        </div>
+                    </div>
+
+                    <!-- ORDER TICKET -->
+                    <div class="panel order-ticket">
+                        <div class="panel-header">
+                            <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                            ORDER ENTRY
+                        </div>
+                        <div class="ticket-form">
+                            <div class="form-group">
+                                <label>SYMBOL</label>
+                                <input type="text" id="ticket-symbol" value="AAPL" class="input-uppercase">
+                            </div>
+                            <div class="form-group">
+                                <label>SIDE</label>
+                                <select id="ticket-side">
+                                    <option value="BUY">BUY</option>
+                                    <option value="SELL">SELL</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>QUANTITY</label>
+                                <input type="number" id="ticket-qty" value="100">
+                            </div>
+                            <div class="form-group">
+                                <label>TYPE</label>
+                                <select id="ticket-type">
+                                    <option value="LIMIT">LIMIT</option>
+                                    <option value="MARKET">MARKET</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>PRICE</label>
+                                <input type="number" id="ticket-price" step="0.01" value="189.50">
+                            </div>
+                            <div class="form-group">
+                                <button class="btn-submit" onclick="submitOrder()">SUBMIT ORDER</button>
+                            </div>
+                            <button class="btn-clear" onclick="clearTicket()">CLEAR</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PORTFOLIO SUMMARY -->
+                <div class="panel portfolio-summary">
+                    <div class="panel-header">
+                        <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                        PORTFOLIO SUMMARY
+                    </div>
+                    <div class="summary-body" id="portfolio-summary-body">
+                        <!-- Filled via JS -->
+                    </div>
+                </div>
+
+                <!-- POSITIONS -->
+                <div class="panel positions">
+                    <div class="panel-header">
+                        <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                        POSITIONS
+                    </div>
+                    <div class="blotter-grid">
+                        <table>
+                            <thead>
+                                <tr id="pos-header">
+                                    <th onclick="sortGrid('positions', 'sym')">SYM</th>
+                                    <th onclick="sortGrid('positions', 'qty')">QTY</th>
+                                    <th onclick="sortGrid('positions', 'cost')">AVG PX</th>
+                                    <th onclick="sortGrid('positions', 'beta')">BETA</th>
+                                    <th onclick="sortGrid('positions', 'var')">VaR (95%)</th>
+                                    <th onclick="sortGrid('positions', 'pl')">UNREALIZED P/L</th>
+                                    <th>SETTLE</th>
+                                </tr>
+                            </thead>
+                            <tbody id="positions-body">
+                                <!-- Populated via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- BLOTTER -->
+                <div class="panel blotter">
+                    <div class="panel-header">
+                        <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                        ORDER BLOTTER
+                    </div>
+                    <div class="blotter-grid">
+                        <table>
+                            <thead>
+                                <tr id="order-header">
+                                    <th onclick="sortGrid('orders', 'time')">TIME</th>
+                                    <th onclick="sortGrid('orders', 'id')">ID</th>
+                                    <th onclick="sortGrid('orders', 'side')">SIDE</th>
+                                    <th onclick="sortGrid('orders', 'symbol')">SYM</th>
+                                    <th onclick="sortGrid('orders', 'qty')">QTY</th>
+                                    <th onclick="sortGrid('orders', 'price')">PX</th>
+                                    <th onclick="sortGrid('orders', 'avgPx')">AVG PX</th>
+                                    <th onclick="sortGrid('orders', 'status')">STATUS</th>
+                                    <th>SETTLE</th>
+                                </tr>
+                            </thead>
+                            <tbody id="blotter-body">
+                                <!-- Filled via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- DONE TRADES -->
+                <div class="panel blotter">
+                    <div class="panel-header">
+                        <span class="panel-toggle" onclick="togglePanel(this)"><span class="icon">▼</span></span>
+                        DONE TRADES
+                    </div>
+                    <div class="blotter-grid">
+                        <table id="trade-table">
+                            <thead>
+                                <tr id="trade-header">
+                                    <th onclick="sortGrid('trades', 'time')">TIME</th>
+                                    <th onclick="sortGrid('trades', 'execId')">EXEC ID</th>
+                                    <th onclick="sortGrid('trades', 'orderId')">ORD ID</th>
+                                    <th onclick="sortGrid('trades', 'side')">SIDE</th>
+                                    <th onclick="sortGrid('trades', 'symbol')">SYM</th>
+                                    <th onclick="sortGrid('trades', 'qty')">QTY</th>
+                                    <th onclick="sortGrid('trades', 'price')">FILL PX</th>
+                                    <th onclick="sortGrid('trades', 'cpty')">CPTY</th>
+                                    <th>SETTLE</th>
+                                </tr>
+                            </thead>
+                            <tbody id="trade-body">
+                                <!-- Populated via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+    <!-- AI ANALYST (Built-in / Floating) -->
+    <div class="panel ai-panel" id="ai-panel">
+        <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>AI ANALYST (BETA)</span>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <span onclick="clearAiLogs()" style="cursor:pointer; font-size: 14px;" title="Clear History">🗑️</span>
+                <span onclick="toggleAiSettings()" style="cursor:pointer; font-size: 14px;" title="Settings">⚙️</span>
+                <span onclick="toggleAiPanel()" style="cursor:pointer; font-size: 16px;">×</span>
+            </div>
+        </div>
+
+        <!-- AI Settings View (Hidden by default) -->
+        <div id="ai-settings-view" class="ai-settings-view" style="display:none;">
+            <div class="settings-group">
+                <label>Provider</label>
+                <select id="cfg-provider" onchange="updateProviderFields()">
+                    <option value="gemini">Google Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="local">Local LLM (OpenAI Format)</option>
+                </select>
+            </div>
+            <div class="settings-group" id="group-url">
+                <label>Base URL</label>
+                <input type="text" id="cfg-url" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="settings-group" id="group-key">
+                <label>API Key</label>
+                <input type="password" id="cfg-key" placeholder="sk-...">
+            </div>
+            <div class="settings-group">
+                <label>Model</label>
+                <div style="display:flex; gap:5px;">
+                    <input type="text" id="cfg-model" list="model-list" placeholder="gemini-1.5-flash" style="flex:1;">
+                    <datalist id="model-list"></datalist>
+                    <button onclick="fetchModels()" id="btn-fetch-models"
+                        style="font-size:10px; padding:0 8px;">FETCH</button>
+                </div>
+            </div>
+            <div class="settings-group">
+                <label>Temperature (<span id="val-temp">0.7</span>)</label>
+                <input type="range" id="cfg-temp" min="0" max="1" step="0.1" value="0.7"
+                    oninput="document.getElementById('val-temp').innerText=this.value">
+            </div>
+            <div class="settings-group">
+                <label>System Prompt</label>
+                <textarea id="cfg-prompt" style="height:60px; font-size:10px;"></textarea>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+                <button onclick="testConnection()" id="btn-test-conn" class="btn-clear"
+                    style="width:100%; border: 1px solid var(--color-accent); color: var(--color-accent);">TEST
+                    CONNECTION</button>
+                <div style="display:flex; gap:8px;">
+                    <button onclick="saveAiSettings()" class="btn-submit" style="flex:1;">SAVE SETTINGS</button>
+                    <button onclick="toggleAiSettings()" class="btn-clear" style="flex:1;">CANCEL</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="ai-body" id="ai-chat-view">
+            <div class="ai-filter-bar">
+                <div class="filter-item">
+                    <label>FROM</label>
+                    <input type="datetime-local" id="cfg-start" onchange="saveDateFilters()">
+                </div>
+                <div class="filter-item">
+                    <label>TO</label>
+                    <input type="datetime-local" id="cfg-end" onchange="saveDateFilters()">
+                </div>
+            </div>
+            <div id="ai-log" class="ai-log">
+                <div class="ai-placeholder">Captured FDC3 events will appear here. Ask me anything!</div>
+            </div>
+            <div class="ai-input-group">
+                <input type="text" id="ai-query" placeholder="Ask about your positions..."
+                    onkeypress="handleAiKey(event)">
+                <button onclick="askAi()" id="ai-send-btn">SEND</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Floating Action Button -->
+    <div class="ai-fab" id="ai-fab" onclick="toggleAiPanel()">
+        ✨
+        <span class="ai-badge" id="ai-badge">0</span>
+    </div>
+
+    <script src="app.js"></script>
+    <div id="toast-container" class="toast-container"></div>
+</body>
+
+</html>

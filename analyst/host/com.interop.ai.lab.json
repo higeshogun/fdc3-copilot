@@ -1,0 +1,9 @@
+{
+    "name": "com.interop.ai.lab",
+    "description": "FDC3 Session Analyst Host",
+    "path": "c:\\interop io intelligence\\interop io intelligence\\interop-ai-lab\\analyst\\host\\host.bat",
+    "type": "stdio",
+    "allowed_origins": [
+        "chrome-extension://nodaoclodcflmbjknlmochcicdkjndbk/"
+    ]
+}
