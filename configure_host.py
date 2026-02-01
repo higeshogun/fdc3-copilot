@@ -3,9 +3,19 @@ import os
 import sys
 
 # Configuration
-ext_id = "nodaoclodcflmbjknlmochcicdkjndbk"
-# Use raw string for Windows paths to avoid escape sequence errors
-base_dir = r"c:\interop io intelligence\interop io intelligence\interop-ai-lab"
+if len(sys.argv) > 1:
+    ext_id = sys.argv[1]
+else:
+    print("Enter your Chrome Extension ID (found in chrome://extensions):")
+    ext_id = input("> ").strip()
+
+if not ext_id:
+    print("Error: Extension ID is required.")
+    sys.exit(1)
+
+# Dynamic Base Directory (Assuming script is run from project root or its own folder)
+# We assume this script is in project_root.
+base_dir = os.path.dirname(os.path.abspath(__file__))
 
 host_dir = os.path.join(base_dir, "analyst", "host")
 json_path = os.path.join(host_dir, "com.interop.ai.lab.json")
