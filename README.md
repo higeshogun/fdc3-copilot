@@ -26,7 +26,9 @@ A sophisticated mock trading platform enhanced with an AI Assistant, built to de
 ### 1. Prerequisites
 *   **Python 3.10+** (Make sure to check "Add Python to PATH" during install)
 *   **Google Chrome** (or Edge/Brave)
-*   **Local LLM** (Optional but recommended): Install [LM Studio](https://lmstudio.ai/) or `llama-server` and run a server on port **8081**.
+*   **AI Provider** (Choose one):
+    *   **Local (Free)**: Install [LM Studio](https://lmstudio.ai/) or `llama-server` (run on port `8081`).
+    *   **Cloud**: Get a **Google Gemini API Key** (Free tier available) or an **OpenAI API Key**.
 
 ### 2. Configure the Extension
 This enables the Native Messaging connection between Chrome and Python.
@@ -66,8 +68,10 @@ This enables the Native Messaging connection between Chrome and Python.
 *   **Settlement Logic**: Trades placed now will automatically calculate T+2 settlement dates (skipping weekends/holidays).
 
 ## ⚙️ Configuration
-*   **Change LLM**: Click the ⚙️ Settings icon in the Web App or Extension to point to OpenAI or a different Local URL.
-*   **Privacy**: All logs are processed locally. No data leaves your machine unless you configure an external API.
+*   **Change LLM**: Click the ⚙️ Settings icon in the Web App or Extension.
+    *   **Local**: Set URL to `http://localhost:8081`.
+    *   **Gemini/OpenAI**: select the provider and paste your API Key.
+*   **Privacy**: All logs are processed locally. Keys are stored in your browser (not on our servers).
 
 ---
 *FDC3 Copilot - 2026*
