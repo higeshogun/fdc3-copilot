@@ -27,6 +27,8 @@ Thumbs.db
 
 # Project Specific
 analyst/sessions/
+analyst/host/com.interop.ai.lab.json
+analyst/install_host.reg
 *.log
 c:/temp/
 
