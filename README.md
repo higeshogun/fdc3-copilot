@@ -81,6 +81,7 @@ We use a lightweight **Retrieval-Augmented Generation (RAG)** approach without a
 1.  **Event Stream**: The Chrome Extension acts as a "Sniffer", capturing every FDC3 broadcast via `window.postMessage`.
 2.  **Sticky Context**: The Analyst script maintains a rolling buffer of 50 events. Crucially, it "sticks" important contexts (like your Portfolio snapshot) to the top of the context window, so the AI never forgets what you own, even if the log is old.
 3.  **Prompt Injection**: When you ask a question, we inject the specific active JSON context directly into the System Prompt of the LLM, giving it "perfect memory" of the current state.
+4.  **Session Logs**: The system acts as a flight recorder, saving all FDC3 traffic and AI chat history to local JSON files (`analyst/sessions/`). This allows the AI to analyze past interactions and provides a full audit trail.
 
 ## 🔗 Acknowledgements & FDC3 Projects
 This project simulates an agent capable of interacting with the open FDC3 ecosystem.
