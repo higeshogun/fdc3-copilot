@@ -4,6 +4,20 @@ A sophisticated trading platform enhanced with AI-powered analysis, built to dem
 
 ![Status](https://img.shields.io/badge/Status-Production-brightgreen)
 
+## 📸 Visual Showcase
+
+### Dark Mode
+![Dark Mode Interface](screenshots/dark-mode.png)
+*Professional dark theme with real-time market data, depth ladder, and portfolio analytics*
+
+### Light Mode
+![Light Mode Interface](screenshots/light-mode.png)
+*Clean light theme optimized for daylight viewing*
+
+### AI Assistant
+![AI Assistant](screenshots/ai-assistant.png)
+*Context-aware AI assistant with streaming responses and suggested actions*
+
 ## 🏗️ Architecture
 
 1.  **React Trading App** (`mock_app/static/`):
