@@ -1,99 +1,172 @@
 # FDC3 Copilot
 
-A sophisticated mock trading platform enhanced with an AI Assistant, built to demonstrate agentic AI capabilities, FDC3 interoperability, and context-aware workflows.
+A sophisticated trading platform enhanced with AI-powered analysis, built to demonstrate agentic AI capabilities, FDC3 interoperability, and context-aware workflows.
 
-![Trailer](https://img.shields.io/badge/Status-Released-brightgreen)
+![Status](https://img.shields.io/badge/Status-Production-brightgreen)
 
-## 🏗️ Components
+## 🏗️ Architecture
 
-1.  **Mock OMS App** (`mock_app/`):
-    *   Features: Real-time price updates (simulated), Watchlist, Order Entry, Blotter, News Feed.
-    *   **New**: Context-aware News, Settlement Date tracking (T+2), AI Integration.
+1.  **React Trading App** (`mock_app/static/`):
+    *   Modern React-based UI with light/dark themes
+    *   Features: Real-time price updates, Watchlist, Order Entry, Positions, Blotter, News Feed
+    *   **Advanced**: Depth Ladder, Portfolio Beta, Risk Metrics (VaR), Context-aware News
+    *   **AI Integration**: Streaming AI Assistant with suggested actions
 
-2.  **AI Analyst Backend** (`analyst/`):
-    *   Python-based server (`workflow_analyst.py`) interfacing with Local LLMs (via `llama.cpp` or OpenAI).
-    *   Analyzes FDC3 logs to provide trading insights, summary, and compliance checks.
-    *   Optimized for AMD/CPU environments.
+2.  **Backend Server** (`mock_app/serve_mock.py`):
+    *   Flask server serving the React app and AI analysis endpoints
+    *   **Session Logging**: Automatically persists FDC3 logs to `analyst/sessions/`
+    *   Supports Gemini, OpenAI, and local LLM providers
 
-3.  **Chrome Extension** (`extension/`):
-    *   A side-panel companion that tracks user context (FDC3) across the productivity suite.
-    *   Provides "Contextual Suggestions" (Chips) based on user activity.
+3.  **AI Analyst** (`analyst/`):
+    *   Python-based workflow analyst (`workflow_analyst.py`)
+    *   Analyzes FDC3 logs to provide trading insights, summaries, and compliance checks
+    *   Optimized for AMD/CPU environments
+
+4.  **Chrome Extension** (`extension/`):
+    *   Side-panel companion tracking FDC3 context across applications
+    *   Provides contextual suggestions based on user activity
 
 ---
 
-## 🚀 Easy Setup Guide
+## 🚀 Quick Start
 
-### 1. Prerequisites
-*   **Python 3.10+** (Make sure to check "Add Python to PATH" during install)
+### Prerequisites
+*   **Python 3.10+** (Add to PATH during installation)
+*   **Node.js 18+** (for frontend development only)
 *   **Google Chrome** (or Edge/Brave)
 *   **AI Provider** (Choose one):
-    *   **Local (Free)**: Install [LM Studio](https://lmstudio.ai/) or `llama-server` (run on port `8081`).
-    *   **Cloud**: Get a **Google Gemini API Key** (Free tier available) or an **OpenAI API Key**.
+    *   **Local (Free)**: [LM Studio](https://lmstudio.ai/) or `llama-server` (port `8081`)
+    *   **Cloud**: Google Gemini API Key or OpenAI API Key
 
-### 2. Configure the Extension
-This enables the Native Messaging connection between Chrome and Python.
+### Installation
 
-1.  Open Chrome and go to `chrome://extensions`.
-2.  Enable **Developer Mode** (top right).
-3.  Click **Load unpacked** and select the `extension/` folder in this repo.
-4.  Copy the **ID** of the newly loaded extension (e.g., `abc...xyz`).
-5.  In your terminal, run the setup script:
+1.  **Clone and Setup**
     ```bash
-    python configure_host.py <YOUR_EXTENSION_ID>
+    git clone <repository-url>
+    cd interop-ai-lab
+    python -m venv .venv
+    .venv\Scripts\activate  # Windows
+    pip install -r analyst/requirements.txt
     ```
-    *Example: `python configure_host.py nodaoclodcflmbjknlmochcicdkjndbk`*
 
-### 3. Start the Backend
-1.  Open a terminal in the project root.
-2.  Run the startup script:
-    *   **Windows**: `.\start_lab.bat`
-    *   **Mac/Linux**: `python analyst/workflow_analyst.py`
-3.  You should see "✅ LLM Server Online" (or a warning if no LLM is found, which is fine for testing the UI).
+2.  **Configure Chrome Extension**
+    *   Open Chrome → `chrome://extensions`
+    *   Enable **Developer Mode**
+    *   Click **Load unpacked** → select `extension/` folder
+    *   Copy the extension ID
+    *   Run: `python configure_host.py <EXTENSION_ID>`
 
-### 4. Run the App
-1.  Open `mock_app/index.html` directly in your browser.
-2.  **Or** (Recommended) use a simple HTTP server:
+3.  **Start the Application**
     ```bash
-    cd mock_app
-    python -m http.server 5500
+    start_stack.bat  # Windows
     ```
-    Then visit `http://localhost:5500`.
+    Or manually:
+    ```bash
+    python mock_app/serve_mock.py
+    ```
+    Then visit **http://localhost:5500/**
 
 ---
 
-## ✨ Key Features to Try
-*   **Context Awareness**: Click "AAPL" in the Watchlist -> The AI Panel knows you are looking at Apple.
-*   **Smart Suggestions**: Click the suggested chips (e.g., "Summarize activity") to get instant analysis.
-*   **News Filtering**: In the News Panel, toggle `[x] FILTER` to see only news relevant to your active stock.
-*   **Settlement Logic**: Trades placed now will automatically calculate T+2 settlement dates (skipping weekends/holidays).
+## ✨ Key Features
 
-## 📚 Knowledge Base: FDC3 Intents
-This project relies heavily on the **Financial Desktop Connectivity and Collaboration Consortium (FDC3)** standard to pass context between the App and the AI Extension.
+### Trading Interface
+*   **Live Depth Ladder**: Click any price level to instantly create limit orders
+*   **Portfolio Analytics**: Net Liquidation, Portfolio Beta, Position-level VaR
+*   **Smart News**: Contextual filtering based on selected instrument
+*   **Theme Support**: Professional light and dark modes
 
-*   `fdc3.instrument` (Context): Represents a financial instrument (e.g., `{"type": "fdc3.instrument", "id": {"ticker": "AAPL"}}`). The AI monitors this to know what you are analyzing.
-*   `fdc3.order` (Context): Represents a trade orders. We use this to trigger compliance checks.
-*   `ViewInstrument` (Intent): Used when you click a stock in the Watchlist.
-*   `ViewNews` (Intent): Used to filter the news feed for specific instruments.
+### AI Assistant
+*   **Streaming Responses**: Real-time AI analysis via Server-Sent Events
+*   **Suggested Actions**: Interactive buttons for common queries
+*   **Session Logging**: All interactions saved to `analyst/sessions/` for audit trails
+*   **Context Awareness**: AI knows your current positions, orders, and selected instruments
 
-## 🧠 How it Works: Simple RAG
-We use a lightweight **Retrieval-Augmented Generation (RAG)** approach without a heavy vector database:
+### FDC3 Integration
+*   **Context Broadcasting**: Instrument, Order, Position, Trade contexts
+*   **Intent Handling**: ViewInstrument, ViewNews, ViewChart
+*   **Extension Tracking**: Browser extension captures all FDC3 activity
 
-1.  **Event Stream**: The Chrome Extension acts as a "Sniffer", capturing every FDC3 broadcast via `window.postMessage`.
-2.  **Sticky Context**: The Analyst script maintains a rolling buffer of 50 events. Crucially, it "sticks" important contexts (like your Portfolio snapshot) to the top of the context window, so the AI never forgets what you own, even if the log is old.
-3.  **Prompt Injection**: When you ask a question, we inject the specific active JSON context directly into the System Prompt of the LLM, giving it "perfect memory" of the current state.
-4.  **Session Logs**: The system acts as a flight recorder, saving all FDC3 traffic and AI chat history to local JSON files (`analyst/sessions/`). This allows the AI to analyze past interactions and provides a full audit trail.
+---
 
-## 🔗 Acknowledgements & FDC3 Projects
-This project simulates an agent capable of interacting with the open FDC3 ecosystem.
-*   **FDC3 Standard**: [finos.org/fdc3](https://finos.org/fdc3)
-*   **FDC3 Sail**: A robust FDC3 Desktop Agent implementation.
-*   **FDC3 Workbench**: Tool for testing FDC3 context compliance.
+## 📁 Project Structure
+
+```
+interop-ai-lab/
+├── mock_app/
+│   ├── static/          # Production React build
+│   ├── legacy/          # Archived legacy app (reference)
+│   └── serve_mock.py    # Flask backend server
+├── frontend/
+│   ├── src/             # React source code
+│   │   ├── mock_app/    # Trading app components
+│   │   └── extension/   # Extension UI components
+│   └── package.json     # Frontend dependencies
+├── analyst/
+│   ├── workflow_analyst.py  # AI analysis engine
+│   ├── sessions/        # FDC3 log storage
+│   └── knowledge/       # Domain knowledge base
+├── extension/           # Chrome extension
+└── start_stack.bat      # Startup script
+```
+
+---
+
+## 🛠️ Development
+
+### Frontend Development
+```bash
+cd frontend
+npm install
+npm run dev  # Dev server on port 5173
+npm run build  # Build to mock_app/static
+```
+
+### Backend Development
+The Flask server auto-reloads on file changes:
+```bash
+python mock_app/serve_mock.py
+```
+
+---
+
+## 🧠 How It Works
+
+### Session Logging & RAG
+1.  **Event Capture**: Chrome Extension sniffs all FDC3 broadcasts
+2.  **Automatic Persistence**: Every AI query saves the current FDC3 context to `analyst/sessions/`
+3.  **Context Injection**: AI receives full session state in its prompt
+4.  **Historical Analysis**: Analyst can review past sessions for compliance and insights
+
+### AI Workflow
+1.  User interacts with trading app (clicks, orders, etc.)
+2.  FDC3 contexts are broadcast and logged
+3.  User asks AI a question
+4.  Backend saves session log and sends context + query to LLM
+5.  AI streams response with suggested follow-up actions
+
+---
 
 ## ⚙️ Configuration
-*   **Change LLM**: Click the ⚙️ Settings icon in the Web App or Extension.
-    *   **Local**: Set URL to `http://localhost:8081`.
-    *   **Gemini/OpenAI**: select the provider and paste your API Key.
-*   **Privacy**: All logs are processed locally. Keys are stored in your browser (not on our servers).
+
+### AI Provider Settings
+*   Click ⚙️ in the AI Assistant panel
+*   **Local LLM**: Set URL to `http://localhost:8081`
+*   **Gemini/OpenAI**: Select provider and paste API key
+*   **Privacy**: All data processed locally, keys stored in browser
+
+### Session Logs
+*   Location: `analyst/sessions/`
+*   Format: JSON files with timestamp
+*   Usage: Compliance audits, historical analysis, debugging
 
 ---
-*FDC3 Copilot - 2026*
+
+## 🔗 FDC3 Resources
+*   **FDC3 Standard**: [finos.org/fdc3](https://finos.org/fdc3)
+*   **Context Types**: Instrument, Order, Position, Trade, Portfolio
+*   **Intents**: ViewInstrument, ViewNews, ViewChart
+
+---
+
+*FDC3 Copilot - Production Ready - 2026*

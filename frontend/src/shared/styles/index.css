@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@import "@eleung/react-grid-layout/css/styles.css";
+@import "react-resizable/css/styles.css";
+
+/* Global Overrides */
+input,
+select,
+textarea {
+    color: inherit !important;
+}
+
+/* Theme Tokens - Default (Dark) */
+:root {
+    --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+    /* Backgrounds */
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --border-primary: #30363d;
+    --panel-bg: rgba(22, 27, 34, 0.7);
+    --panel-border: rgba(48, 54, 61, 0.6);
+
+    /* Text */
+    --text-primary: #c9d1d9;
+    --text-secondary: #8b949e;
+    --text-tertiary: #484f58;
+    --text-accent: #ffffff;
+
+    /* Accents */
+    --accent-color: #2f81f7;
+    --accent-hover: #58a6ff;
+    --success-color: #3fb950;
+    --danger-color: #f85149;
+    --warning-color: #d29922;
+
+    color-scheme: dark;
+}
+
+.light-theme {
+    /* Backgrounds */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #eff2f5;
+    --border-primary: #d0d7de;
+    --panel-bg: rgba(255, 255, 255, 0.8);
+    --panel-border: rgba(208, 215, 222, 0.8);
+
+    /* Text */
+    --text-primary: #1f2328;
+    --text-secondary: #656d76;
+    --text-tertiary: #8c959f;
+    --text-accent: #000000;
+
+    /* Accents */
+    --accent-color: #0969da;
+    --accent-hover: #1f883d;
+    --success-color: #1a7f37;
+    --danger-color: #cf222e;
+    --warning-color: #9a6700;
+
+    color-scheme: light;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--font-family);
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    overflow: hidden;
+    transition: background-color 0.3s ease;
+}
+
+/* Scrollbar polish */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #50565e;
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+    background: var(--panel-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* Grid Layout overrides */
+.react-grid-item {
+    transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.react-grid-placeholder {
+    background: rgba(47, 129, 247, 0.1) !important;
+    border: 1px dashed var(--accent-color) !important;
+    border-radius: 6px;
+    opacity: 0.5;
+}

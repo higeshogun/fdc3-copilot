@@ -4,7 +4,7 @@ import os
 import requests
 import json
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
 PORT = 5500
@@ -12,11 +12,12 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 @app.route('/')
 def index():
-    return send_from_directory(DIRECTORY, 'index.html')
+    return send_from_directory(app.static_folder, 'mock_app.html')
 
-@app.route('/<path:path>')
-def static_files(path):
-    return send_from_directory(DIRECTORY, path)
+@app.route('/assets/<path:path>')
+def send_assets(path):
+    return send_from_directory(os.path.join(app.static_folder, 'assets'), path)
+
 
 def gemini_call(prompt, api_key, model, temp, system_prompt, stream=False):
     try:
@@ -65,6 +66,28 @@ def analyze():
     query = data.get('query', '')
     config = data.get('config', {})
     stream = data.get('stream', False)
+    
+    # Session Persistence Logic
+    if logs:
+        try:
+            # Locate analyst/sessions relative to this script
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            sessions_dir = os.path.join(base_dir, "analyst", "sessions")
+            
+            if not os.path.exists(sessions_dir):
+                os.makedirs(sessions_dir)
+            
+            # Use timestamp and random suffix to avoid collisions if multiple requests arrive at the same second
+            import time, random
+            ts = int(time.time() * 1000)
+            rand = random.randint(1000, 9999)
+            session_file = os.path.join(sessions_dir, f"session-{ts}-{rand}.json")
+            
+            with open(session_file, "w", encoding='utf-8') as f:
+                json.dump(logs, f, indent=2)
+            print(f"✅ Session saved: {os.path.basename(session_file)}")
+        except Exception as e:
+            print(f"❌ Failed to save session: {e}")
     
     provider = config.get('provider', 'gemini')
     api_key = config.get('key', '')
@@ -186,6 +209,10 @@ def test_connection():
         return jsonify({"success": True, "message": f"Successfully connected to {provider.upper()}!"})
     except Exception as e:
         return jsonify({"success": False, "message": f"Connection failed: {str(e)}"})
+
+@app.route('/<path:path>')
+def static_files(path):
+    return send_from_directory(DIRECTORY, path)
 
 if __name__ == '__main__':
     print(f"Mock FDC3 App (Flask) running at http://0.0.0.0:{PORT}")
