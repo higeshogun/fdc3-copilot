@@ -63,8 +63,8 @@ A sophisticated trading platform enhanced with AI-powered analysis, built to dem
 1. **Clone and Setup**
 
     ```bash
-    git clone <repository-url>
-    cd interop-ai-lab
+    git clone https://github.com/higeshogun/interop-trader.git
+    cd interop-trader
     
     # 1. Setup Backend
     # Windows:
@@ -116,7 +116,7 @@ A sophisticated trading platform enhanced with AI-powered analysis, built to dem
 * **Smart News**: Contextual filtering based on selected instrument
 * **Theme Support**: Professional light and dark modes
 
-### AI Assistant
+### AI Assistant Features
 
 * **Streaming Responses**: Real-time AI analysis via Server-Sent Events
 * **Suggested Actions**: Interactive buttons for common queries
@@ -133,8 +133,8 @@ A sophisticated trading platform enhanced with AI-powered analysis, built to dem
 
 ## 📁 Project Structure
 
-```
-interop-ai-lab/
+```text
+interop-trader/
 ├── mock_app/
 │   ├── static/          # Production React build
 │   ├── legacy/          # Archived legacy app (reference)
@@ -219,4 +219,4 @@ python mock_app/serve_mock.py
 
 ---
 
-*Interop Trader - Production Ready - 2026*
+### *Interop Trader - Production Ready - 2026*
