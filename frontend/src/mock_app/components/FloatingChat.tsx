@@ -25,7 +25,7 @@ const FloatingChat = () => {
     const [isMinimized, setIsMinimized] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [query, setQuery] = useState('');
-    const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant', content: string, timestamp: number, mode?: 'native' | 'mcp' }[]>([]);
+    const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant', content: string, timestamp: number, mode?: 'native' | 'mcp', toolsUsed?: string[] }[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
     const [models, setModels] = useState<string[]>([]);
@@ -113,10 +113,11 @@ const FloatingChat = () => {
 
                         // Update chat
                         const analysisText = data.analysis || "No analysis provided.";
+                        const toolsUsedList = data.toolsUsed || (result?._meta?.toolsUsed) || [];
                         setChatHistory(prev => {
                             const next = [...prev];
                             if (next[assistantMessageIdx]) {
-                                next[assistantMessageIdx] = { ...next[assistantMessageIdx], content: analysisText };
+                                next[assistantMessageIdx] = { ...next[assistantMessageIdx], content: analysisText, toolsUsed: toolsUsedList };
                             }
                             return next;
                         });
@@ -619,6 +620,16 @@ const FloatingChat = () => {
                                                     <div className={`mt-1 flex items-center gap-1 text-[9px] font-mono ${item.mode === 'mcp' ? 'text-purple-400' : 'text-cyan-400'}`}>
                                                         <Zap size={8} />
                                                         {item.mode === 'mcp' ? 'MCP Mode' : 'Native Mode'} · {aiConfig.provider}
+                                                        {item.toolsUsed && item.toolsUsed.length > 0 && (
+                                                            <>
+                                                                <span className="mx-1 text-[var(--text-tertiary)]">·</span>
+                                                                {item.toolsUsed.map((tool, idx) => (
+                                                                    <span key={idx} className="inline-flex items-center px-1.5 py-0 rounded bg-[var(--accent-color)]/15 text-[var(--accent-color)] text-[8px] font-semibold ml-0.5">
+                                                                        {tool}
+                                                                    </span>
+                                                                ))}
+                                                            </>
+                                                        )}
                                                     </div>
                                                 )}
                                                 {item.content.includes('Suggested Actions:') && (

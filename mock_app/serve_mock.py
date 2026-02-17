@@ -1647,6 +1647,7 @@ def process_analysis(query, logs, config, stream=False, enable_trading=True):
     Core analysis logic shared between HTTP /analyze endpoint and MCP 'ask_analyst' tool.
     Retuns a generator if stream=True, or a dict if stream=False.
     """
+    tools_used = []  # Track which tools are invoked during analysis
     # Session Persistence Logic
     if logs:
         try:
@@ -1853,17 +1854,19 @@ RULES:
                     arguments = func_call.get('args', {})
 
                     log_to_file(f"[Gemini] Function call: {tool_name}({arguments})")
+                    tools_used.append(tool_name)
                     tool_result = execute_tool_call(tool_name, arguments)
 
                     if tool_result.get('type') == 'pending_trade':
                         return {
                             "analysis": (preamble + "\n\n" + tool_result['message']).strip(),
-                            "pending_trade": tool_result
+                            "pending_trade": tool_result,
+                            "toolsUsed": tools_used
                         }
 
                     if tool_result.get('error'):
                         err_msg = f"IBKR Error: {tool_result['error']}"
-                        return {"analysis": (preamble + "\n\n" + err_msg).strip() if preamble else err_msg}
+                        return {"analysis": (preamble + "\n\n" + err_msg).strip() if preamble else err_msg, "toolsUsed": tools_used}
 
                     # Second call to summarize the tool result
                     tool_result_str = json.dumps(tool_result, indent=2)
@@ -1873,12 +1876,12 @@ RULES:
                     summary_parts = summary_candidate.get('content', {}).get('parts', [])
                     summary_text = "".join(p.get('text', '') for p in summary_parts)
 
-                    return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                    return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```", "toolsUsed": tools_used}
 
                 elif preamble:
-                    return {"analysis": preamble}
+                    return {"analysis": preamble, "toolsUsed": tools_used}
 
-                return {"analysis": "No response from AI."}
+                return {"analysis": "No response from AI.", "toolsUsed": tools_used}
 
             else:
                 # Local / OpenAI path — query intent detection first
@@ -1894,17 +1897,18 @@ RULES:
 
                 if direct_tool:
                     log_to_file(f"[Local LLM MCP] Query intent → {direct_tool}")
+                    tools_used.append(direct_tool)
                     tool_result = execute_tool_call(direct_tool, {})
                     if tool_result.get('error'):
-                        return {"analysis": f"IBKR Error: {tool_result['error']}"}
+                        return {"analysis": f"IBKR Error: {tool_result['error']}", "toolsUsed": tools_used}
                     tool_result_str = json.dumps(tool_result, indent=2)
                     summary_prompt = f"User asked: {query}\n\nHere is the real-time data from Interactive Brokers:\n{tool_result_str}\n\nProvide a clear, formatted summary. Only use the data above — do NOT make up any numbers."
                     try:
                         summary_msg = openai_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, base_url)
                         summary_text = summary_msg.get('content', '') if isinstance(summary_msg, dict) else str(summary_msg)
-                        return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                        return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```", "toolsUsed": tools_used}
                     except Exception:
-                        return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                        return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```", "toolsUsed": tools_used}
 
                 tools = tools_to_openai_format() if enable_trading else None
                 message = openai_call(prompt, api_key, model_name, temp, enhanced_system_prompt, base_url, tools=tools)
@@ -1920,13 +1924,14 @@ RULES:
                         arguments = {}
 
                     log_to_file(f"[Local LLM] Tool call: {tool_name}({arguments})")
+                    tools_used.append(tool_name)
                     tool_result = execute_tool_call(tool_name, arguments)
 
                     if tool_result.get('type') == 'pending_trade':
-                        return {"analysis": tool_result['message'], "pending_trade": tool_result}
+                        return {"analysis": tool_result['message'], "pending_trade": tool_result, "toolsUsed": tools_used}
 
                     if tool_result.get('error'):
-                        return {"analysis": f"IBKR Error: {tool_result['error']}"}
+                        return {"analysis": f"IBKR Error: {tool_result['error']}", "toolsUsed": tools_used}
 
                     # Call LLM again to summarize the tool result
                     tool_result_str = json.dumps(tool_result, indent=2)
@@ -1934,9 +1939,9 @@ RULES:
                     try:
                         summary_msg = openai_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, base_url)
                         summary_text = summary_msg.get('content', '') if isinstance(summary_msg, dict) else str(summary_msg)
-                        return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                        return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```", "toolsUsed": tools_used}
                     except Exception:
-                        return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                        return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```", "toolsUsed": tools_used}
 
                 # No formal tool_calls — check for text-based tool call
                 content = message.get('content', '') if isinstance(message, dict) else str(message)
@@ -1945,23 +1950,24 @@ RULES:
                     detected_tool = next((t for t in known_tools if t in content), None)
                     if detected_tool:
                         log_to_file(f"[Local LLM MCP] Detected text-based tool call: {detected_tool}")
+                        tools_used.append(detected_tool)
                         tool_result = execute_tool_call(detected_tool, {})
                         if tool_result.get('error'):
-                            return {"analysis": f"IBKR Error: {tool_result['error']}"}
+                            return {"analysis": f"IBKR Error: {tool_result['error']}", "toolsUsed": tools_used}
                         tool_result_str = json.dumps(tool_result, indent=2)
                         summary_prompt = f"User asked: {query}\n\nHere is the real-time data from IBKR:\n{tool_result_str}\n\nPlease provide a clear, formatted summary of this data for the user. Do NOT make up any data."
                         try:
                             summary_msg = openai_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, base_url)
                             summary_text = summary_msg.get('content', '') if isinstance(summary_msg, dict) else str(summary_msg)
-                            return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                            return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```", "toolsUsed": tools_used}
                         except Exception:
-                            return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                            return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```", "toolsUsed": tools_used}
 
-                return {"analysis": content if content else "No response from AI."}
+                return {"analysis": content if content else "No response from AI.", "toolsUsed": tools_used}
 
         except Exception as e:
             log_to_file(f"[MCP Error] {str(e)}")
-            return {"analysis": f"Error: {str(e)}"}
+            return {"analysis": f"Error: {str(e)}", "toolsUsed": tools_used}
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
