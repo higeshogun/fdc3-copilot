@@ -122,6 +122,13 @@ const FloatingChat = () => {
                             return next;
                         });
 
+                        // Auto-refresh state if a mutating tool was used (cancel_order, place_order, modify_order)
+                        const mutatingTools = ['cancel_order', 'place_order', 'modify_order'];
+                        if (toolsUsedList.some((t: string) => mutatingTools.includes(t))) {
+                            console.log('[Chat] Mutating tool detected, refreshing state...');
+                            await broadcastSnapshot();
+                        }
+
                     } catch (e) {
                         console.error("Failed to parse MCP analysis result:", e);
                         // Fallback: display raw text
