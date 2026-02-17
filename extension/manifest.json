@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Interop AI Lab",
+  "name": "Interop Trader",
   "version": "1.0",
   "permissions": [
     "sidePanel",

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FDC3 Copilot — an AI-enhanced trading platform demonstrating agentic AI capabilities and FDC3 interoperability. React frontend served by a Flask backend, with optional IBKR brokerage integration and multi-provider LLM analysis.
+Interop Trader — an AI-enhanced trading platform demonstrating agentic AI capabilities and FDC3 interoperability. React frontend served by a Flask backend, with optional IBKR brokerage integration and multi-provider LLM analysis.
 
 ## Build & Run Commands
 

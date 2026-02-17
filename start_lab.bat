@@ -1,7 +1,7 @@
 @echo off
-title Interop AI Lab - Startup Manager
+title Interop Trader - Startup Manager
 echo --------------------------------------------------
-echo    Starting Interop AI Lab
+echo    Starting Interop Trader
 echo --------------------------------------------------
 
 :: 1. External LLM Connected (llama.cpp on port 8081)

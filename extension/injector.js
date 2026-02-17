@@ -85,7 +85,7 @@
         },
         getInfo: () => ({
             fdc3Version: "2.0",
-            provider: "Interop AI Lab"
+            provider: "Interop Trader"
         })
     });
 

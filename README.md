@@ -1,4 +1,4 @@
-# FDC3 Copilot
+# Interop Trader
 
 A sophisticated trading platform enhanced with AI-powered analysis, built to demonstrate agentic AI capabilities, FDC3 interoperability, and context-aware workflows.
 
@@ -219,4 +219,4 @@ python mock_app/serve_mock.py
 
 ---
 
-*FDC3 Copilot - Production Ready - 2026*
+*Interop Trader - Production Ready - 2026*

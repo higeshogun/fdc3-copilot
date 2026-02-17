@@ -132,7 +132,7 @@ def main():
     print("\n" + "="*60)
     print("  MCP Integration Diagnostic Report")
     print("="*60)
-    print("\nThis script tests the connection between the FDC3 Copilot")
+    print("\nThis script tests the connection between the Interop Trader")
     print("and the IB_MCP server for Interactive Brokers integration.")
     
     results = {

@@ -1,9 +1,9 @@
 @echo off
 setlocal
-title Interop AI Lab - Windows Setup
+title Interop Trader - Windows Setup
 
 echo ==========================================
-echo    Interop AI Lab - Windows Setup
+echo    Interop Trader - Windows Setup
 echo ==========================================
 
 :: 1. Check for Python
