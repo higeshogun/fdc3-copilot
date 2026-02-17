@@ -115,6 +115,244 @@ def tools_to_gemini_format(tools=None):
     }]
 
 # ═══════════════════════════════════════════════════════════
+# MCP RESOURCES — Static reference data for clients
+# ═══════════════════════════════════════════════════════════
+
+MCP_RESOURCES = [
+    {
+        "uri": "ibkr://reference/exchanges",
+        "name": "Supported Exchanges",
+        "description": "List of supported exchanges and routing destinations for order placement.",
+        "mimeType": "application/json"
+    },
+    {
+        "uri": "ibkr://reference/market-data-fields",
+        "name": "Market Data Field Reference",
+        "description": "Mapping of IBKR market data field IDs to human-readable names (e.g., field 31 = Last Price).",
+        "mimeType": "application/json"
+    },
+    {
+        "uri": "ibkr://reference/order-types",
+        "name": "Order Types Guide",
+        "description": "All supported order types with descriptions, required parameters, and examples.",
+        "mimeType": "application/json"
+    },
+    {
+        "uri": "ibkr://reference/common-symbols",
+        "name": "Common Stock Symbols",
+        "description": "Pre-mapped stock symbols with their IBKR contract IDs (conids) for fast lookup.",
+        "mimeType": "application/json"
+    },
+    {
+        "uri": "ibkr://reference/fx-pairs",
+        "name": "FX Currency Pairs",
+        "description": "Available forex currency pairs with contract IDs and exchange routing.",
+        "mimeType": "application/json"
+    },
+    {
+        "uri": "ibkr://reference/server-capabilities",
+        "name": "Server Capabilities",
+        "description": "Current server status, supported features, and connection information.",
+        "mimeType": "application/json"
+    }
+]
+
+
+def get_resource_content(uri: str) -> dict:
+    """Return the content for a given MCP resource URI."""
+    if uri == "ibkr://reference/exchanges":
+        return {
+            "exchanges": [
+                {"code": "SMART", "name": "Smart Routing", "description": "IBKR's smart order routing — automatically finds the best execution venue.", "assetClasses": ["STK", "OPT", "FUT"]},
+                {"code": "IDEALPRO", "name": "IDEALPRO", "description": "Interbank forex exchange for large FX orders (min 25,000 base currency).", "assetClasses": ["CASH"]},
+                {"code": "NYSE", "name": "New York Stock Exchange", "description": "Primary US stock exchange.", "assetClasses": ["STK"]},
+                {"code": "NASDAQ", "name": "NASDAQ", "description": "US electronic stock exchange, heavy in tech stocks.", "assetClasses": ["STK"]},
+                {"code": "ARCA", "name": "NYSE Arca", "description": "Electronic exchange for ETFs and equities.", "assetClasses": ["STK", "ETF"]},
+                {"code": "GLOBEX", "name": "CME Globex", "description": "CME Group electronic futures and options exchange.", "assetClasses": ["FUT", "OPT"]},
+                {"code": "ISLAND", "name": "NASDAQ Island", "description": "NASDAQ ECN for equities.", "assetClasses": ["STK"]}
+            ],
+            "defaultRouting": {
+                "STK": "SMART",
+                "CASH": "IDEALPRO",
+                "FUT": "SMART",
+                "OPT": "SMART"
+            }
+        }
+    elif uri == "ibkr://reference/market-data-fields":
+        return {
+            "fields": {
+                "31": {"name": "Last Price", "description": "Last traded price"},
+                "83": {"name": "Change", "description": "Price change from previous close"},
+                "84": {"name": "Bid Price", "description": "Current best bid"},
+                "85": {"name": "Ask Size", "description": "Size available at the ask"},
+                "86": {"name": "Ask Price", "description": "Current best ask"},
+                "88": {"name": "Volume", "description": "Total traded volume for the day"},
+                "7059": {"name": "Last Size", "description": "Size of the last trade"},
+                "6509": {"name": "Market Data Availability", "description": "'R' = real-time, 'D' = delayed, 'Z' = frozen"}
+            },
+            "notes": "Delayed data may have a letter prefix (e.g., 'C270.01'). Strip the leading letter to get the numeric value."
+        }
+    elif uri == "ibkr://reference/order-types":
+        return {
+            "orderTypes": [
+                {"code": "MKT", "name": "Market", "description": "Executes immediately at the best available price. No price guarantee.", "requiredParams": ["symbol", "side", "quantity"], "optionalParams": ["outside_rth", "all_or_none"]},
+                {"code": "LMT", "name": "Limit", "description": "Executes at the specified price or better. May not fill if price is not reached.", "requiredParams": ["symbol", "side", "quantity", "limit_price"], "optionalParams": ["outside_rth", "all_or_none"]},
+                {"code": "STP", "name": "Stop", "description": "Becomes a market order when the stop price is reached. Used for stop-losses.", "requiredParams": ["symbol", "side", "quantity", "aux_price"], "optionalParams": []},
+                {"code": "TRAIL", "name": "Trailing Stop", "description": "Stop price trails the market by a fixed amount or percentage.", "requiredParams": ["symbol", "side", "quantity", "trailing_amt", "trailing_type"], "optionalParams": []}
+            ],
+            "sides": [
+                {"code": "BUY", "description": "Buy / go long"},
+                {"code": "SELL", "description": "Sell / close long position or go short"}
+            ],
+            "timeInForce": [
+                {"code": "DAY", "description": "Order expires at end of trading day (default)"},
+                {"code": "GTC", "description": "Good 'til cancelled — stays open until filled or manually cancelled"}
+            ]
+        }
+    elif uri == "ibkr://reference/common-symbols":
+        return {
+            "stocks": [
+                {"symbol": k, "conid": v, "exchange": "SMART"}
+                for k, v in SYMBOL_CONID_MAP.items() if '/' not in k
+            ],
+            "note": "Use search_contract tool to find conids for symbols not listed here."
+        }
+    elif uri == "ibkr://reference/fx-pairs":
+        return {
+            "pairs": [
+                {"symbol": k, "conid": v, "exchange": "IDEALPRO"}
+                for k, v in SYMBOL_CONID_MAP.items() if '/' in k
+            ],
+            "note": "FX orders route via IDEALPRO. Minimum order size is typically 25,000 units of base currency."
+        }
+    elif uri == "ibkr://reference/server-capabilities":
+        return {
+            "server": "IBKR-Mock-MCP",
+            "version": "1.1.0",
+            "features": [
+                "tools — 10 trading tools (orders, positions, account, search, market data, analyst)",
+                "resources — 6 reference data items (exchanges, fields, order types, symbols)",
+                "prompts — 5 pre-built analyst prompt templates"
+            ],
+            "connections": {
+                "ibkr_gateway": "https://localhost:5000",
+                "flask_server": f"http://0.0.0.0:{PORT}",
+                "websocket_relay": f"wss://127.0.0.1:5000/v1/api/ws"
+            },
+            "gatewayAvailable": mcp_client.is_available()
+        }
+    else:
+        return {"error": f"Resource not found: {uri}"}
+
+
+# ═══════════════════════════════════════════════════════════
+# MCP PROMPTS — Pre-built analyst prompt templates
+# ═══════════════════════════════════════════════════════════
+
+MCP_PROMPTS = [
+    {
+        "name": "portfolio-review",
+        "description": "Comprehensive review of current portfolio positions, P&L, and allocation. Fetches live data from IBKR.",
+        "arguments": [
+            {
+                "name": "focus",
+                "description": "Optional focus area: 'performance', 'risk', 'allocation', or 'all'",
+                "required": False
+            }
+        ]
+    },
+    {
+        "name": "trade-analysis",
+        "description": "Analyze a potential trade — evaluate the instrument, current price, and provide a buy/sell/hold recommendation with rationale.",
+        "arguments": [
+            {
+                "name": "symbol",
+                "description": "Ticker symbol to analyze (e.g., AAPL, TSLA, EUR/USD)",
+                "required": True
+            },
+            {
+                "name": "side",
+                "description": "Intended trade direction: 'BUY' or 'SELL'",
+                "required": False
+            }
+        ]
+    },
+    {
+        "name": "risk-assessment",
+        "description": "Assess portfolio risk exposure including concentration, sector allocation, and potential downturn impact.",
+        "arguments": [
+            {
+                "name": "scenario",
+                "description": "Optional stress scenario: 'market_crash', 'sector_rotation', 'rate_hike', or 'custom'",
+                "required": False
+            }
+        ]
+    },
+    {
+        "name": "market-summary",
+        "description": "Summarize current market conditions, trends, and notable movers relevant to your portfolio.",
+        "arguments": [
+            {
+                "name": "scope",
+                "description": "Market scope: 'us_equities', 'forex', 'global', or 'portfolio_relevant'",
+                "required": False
+            }
+        ]
+    },
+    {
+        "name": "order-review",
+        "description": "Review all pending and recent orders, flag any issues, and suggest optimizations (e.g., better limit prices).",
+        "arguments": []
+    }
+]
+
+
+def build_prompt_messages(name: str, arguments: dict) -> list:
+    """Build the messages array for a given prompt template with filled arguments."""
+    if name == "portfolio-review":
+        focus = arguments.get("focus", "all")
+        focus_instruction = {
+            "performance": "Focus on P&L, returns, and winners/losers.",
+            "risk": "Focus on risk metrics, concentration, and downside exposure.",
+            "allocation": "Focus on asset allocation, sector balance, and diversification.",
+            "all": "Cover performance, risk, and allocation comprehensively."
+        }.get(focus, "Cover performance, risk, and allocation comprehensively.")
+        return [
+            {"role": "user", "content": {"type": "text", "text": f"Please review my current portfolio. {focus_instruction}\n\nStart by calling get_positions and get_account_summary to fetch live data, then provide your analysis."}}
+        ]
+    elif name == "trade-analysis":
+        symbol = arguments.get("symbol", "")
+        side = arguments.get("side", "")
+        side_text = f" I'm considering a {side} position." if side else ""
+        return [
+            {"role": "user", "content": {"type": "text", "text": f"Analyze {symbol} as a potential trade.{side_text}\n\nUse search_contract to look up the instrument, then get_positions to check if I already hold it, and get_account_summary for available buying power. Provide your analysis with entry/exit levels and risk considerations."}}
+        ]
+    elif name == "risk-assessment":
+        scenario = arguments.get("scenario", "")
+        scenario_text = f" Specifically model a '{scenario}' scenario." if scenario else ""
+        return [
+            {"role": "user", "content": {"type": "text", "text": f"Assess my portfolio's risk exposure.{scenario_text}\n\nCall get_positions and get_account_summary first. Then analyze concentration risk, correlations, and potential downside. Suggest hedging strategies if appropriate."}}
+        ]
+    elif name == "market-summary":
+        scope = arguments.get("scope", "portfolio_relevant")
+        scope_text = {
+            "us_equities": "Focus on US equity markets.",
+            "forex": "Focus on foreign exchange markets.",
+            "global": "Cover global markets broadly.",
+            "portfolio_relevant": "Focus on markets relevant to my current holdings."
+        }.get(scope, "Focus on markets relevant to my current holdings.")
+        return [
+            {"role": "user", "content": {"type": "text", "text": f"Give me a market summary. {scope_text}\n\nCall get_positions to see what I hold, then provide market context, recent trends, and any notable developments that could impact my positions."}}
+        ]
+    elif name == "order-review":
+        return [
+            {"role": "user", "content": {"type": "text", "text": "Review my current orders. Call get_orders to fetch all pending and recent orders. Flag any issues (e.g., stale limit orders, partially filled orders). Suggest optimizations like adjusting limit prices closer to market."}}
+        ]
+    else:
+        return [{"role": "user", "content": {"type": "text", "text": f"Unknown prompt: {name}"}}]
+
+
+# ═══════════════════════════════════════════════════════════
 # IBKR PROXY CONFIGURATION
 # ═══════════════════════════════════════════════════════════
 IBKR_BASE_URL = "https://127.0.0.1:5000"
@@ -807,7 +1045,9 @@ def mcp_execute():
         return jsonify({"error": "tool name required"}), 400
 
     result = mcp_client.call_tool(tool_name, arguments)
-    return jsonify(result)
+    result_with_meta = result if isinstance(result, dict) else {"data": result}
+    result_with_meta["_meta"] = {"toolsUsed": [tool_name], "resourcesUsed": []}
+    return jsonify(result_with_meta)
 
 @app.route('/mcp/confirm', methods=['POST'])
 def mcp_confirm():
@@ -948,11 +1188,13 @@ def mcp_messages_endpoint():
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {
-                        "tools": {}
+                        "tools": {},
+                        "resources": {},
+                        "prompts": {}
                     },
                     "serverInfo": {
                         "name": "IBKR-Mock-MCP",
-                        "version": "1.0.0"
+                        "version": "1.1.0"
                     }
                 }
             }
@@ -992,22 +1234,48 @@ def mcp_messages_endpoint():
             # Execute tool in background thread to avoid blocking the HTTP request
             def run_tool_background(sid, mid, t_name, t_args):
                 log_to_file(f"[BG Tool] [MCP-MW] Starting {t_name} for session {sid}...")
+                tools_used = []
+                resources_used = []
+
                 try:
                     # New MCP Tool: ask_analyst
                     if t_name == "ask_analyst":
+                        tools_used.append("ask_analyst")
                         query = t_args.get("query", "")
                         logs = t_args.get("logs", [])
                         config = t_args.get("config", {})
                         enable_trading = t_args.get("enable_trading", False)
-                        # Ask analyst non-streaming
-                        log_to_file(f"[BG Tool] Calling process_analysis for ask_analyst")
-                        result = process_analysis(query, logs, config, stream=False, enable_trading=enable_trading)
-                        log_to_file(f"[BG Tool] process_analysis returned: {str(result)[:100]}...")
+
+                        # Wrap mcp_client.call_tool to track sub-tool calls
+                        original_call_tool = mcp_client.call_tool
+                        def tracking_call_tool(tool_name, tool_args):
+                            tools_used.append(tool_name)
+                            log_to_file(f"[BG Tool] Sub-tool call: {tool_name}")
+                            return original_call_tool(tool_name, tool_args)
+                        mcp_client.call_tool = tracking_call_tool
+
+                        # Also wrap execute_tool_call to track in-process tool calls
+                        original_execute = globals().get('execute_tool_call')
+                        def tracking_execute(tool_name, arguments):
+                            if tool_name not in tools_used:
+                                tools_used.append(tool_name)
+                            return original_execute(tool_name, arguments)
+                        globals()['execute_tool_call'] = tracking_execute
+
+                        try:
+                            log_to_file(f"[BG Tool] Calling process_analysis for ask_analyst")
+                            result = process_analysis(query, logs, config, stream=False, enable_trading=enable_trading)
+                            log_to_file(f"[BG Tool] process_analysis returned: {str(result)[:100]}...")
+                        finally:
+                            # Restore original functions
+                            mcp_client.call_tool = original_call_tool
+                            globals()['execute_tool_call'] = original_execute
                     else:
-                        # Existing Call to IBKR Client
+                        # Direct IBKR tool call
+                        tools_used.append(t_name)
                         result = mcp_client.call_tool(t_name, t_args)
                     
-                    log_to_file(f"[BG Tool] [MCP-MW] Finished {t_name}")
+                    log_to_file(f"[BG Tool] [MCP-MW] Finished {t_name} (tools_used: {tools_used})")
                     
                     # Format for MCP tool result
                     content = []
@@ -1027,7 +1295,11 @@ def mcp_messages_endpoint():
                         "id": mid,
                         "result": {
                             "content": content,
-                            "isError": False if "error" not in str(result) else True
+                            "isError": False if "error" not in str(result) else True,
+                            "_meta": {
+                                "toolsUsed": tools_used,
+                                "resourcesUsed": resources_used
+                            }
                         }
                     }
                 except Exception as e:
@@ -1038,6 +1310,10 @@ def mcp_messages_endpoint():
                         "error": {
                             "code": -32000,
                             "message": str(e)
+                        },
+                        "_meta": {
+                            "toolsUsed": tools_used,
+                            "resourcesUsed": resources_used
                         }
                     }
 
@@ -1054,6 +1330,77 @@ def mcp_messages_endpoint():
             
             # Return accepted immediately while tool runs in background
             return "Accepted", 202
+
+        elif method == "resources/list":
+            response = {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "resources": MCP_RESOURCES
+                }
+            }
+
+        elif method == "resources/read":
+            uri = params.get("uri", "")
+            content = get_resource_content(uri)
+            if "error" in content:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32602, "message": content["error"]}
+                }
+            else:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "contents": [{
+                            "uri": uri,
+                            "mimeType": "application/json",
+                            "text": json.dumps(content)
+                        }]
+                    }
+                }
+
+        elif method == "prompts/list":
+            response = {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "prompts": MCP_PROMPTS
+                }
+            }
+
+        elif method == "prompts/get":
+            prompt_name = params.get("name", "")
+            prompt_args = params.get("arguments", {})
+            # Verify the prompt exists
+            prompt_def = next((p for p in MCP_PROMPTS if p["name"] == prompt_name), None)
+            if not prompt_def:
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32602, "message": f"Prompt not found: {prompt_name}"}
+                }
+            else:
+                # Check required arguments
+                missing = [a["name"] for a in prompt_def.get("arguments", []) if a.get("required") and a["name"] not in prompt_args]
+                if missing:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {"code": -32602, "message": f"Missing required arguments: {', '.join(missing)}"}
+                    }
+                else:
+                    messages = build_prompt_messages(prompt_name, prompt_args)
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {
+                            "description": prompt_def["description"],
+                            "messages": messages
+                        }
+                    }
 
         else:
             # Unknown method
