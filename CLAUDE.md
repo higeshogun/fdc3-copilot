@@ -9,6 +9,7 @@ FDC3 Copilot — an AI-enhanced trading platform demonstrating agentic AI capabi
 ## Build & Run Commands
 
 ### Frontend (from `frontend/`)
+
 ```bash
 npm install              # install dependencies
 npm run dev              # Vite dev server on port 5173
@@ -18,19 +19,27 @@ npm run preview          # preview production build
 ```
 
 ### Backend (from repo root)
+
 ```bash
+# 1. Create and activate virtual environment
 python -m venv .venv
-.venv\Scripts\activate                    # Windows
-pip install -r analyst/requirements.txt   # LangChain, FAISS, sentence-transformers, etc.
-python mock_app/serve_mock.py             # Flask server on port 5500
+.venv\Scripts\activate
+
+# 2. Install dependencies (including flask, requests, etc.)
+pip install -r analyst/requirements.txt
+
+# 3. Run server (ensure venv python is used)
+python mock_app/serve_mock.py
 ```
 
 ### Full Stack (Windows)
+
 ```bash
 start_stack.bat          # Launches Flask backend (5500) + analyst layer in parallel, opens browser
 ```
 
 ### Analyst Standalone
+
 ```bash
 python analyst/workflow_analyst.py --model mistral --url http://localhost:8081
 ```
