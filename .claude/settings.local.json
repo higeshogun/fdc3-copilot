@@ -22,7 +22,7 @@
       "Bash(docker ps:*)",
       "Bash(docker start:*)",
       "Bash(docker exec:*)",
-      "Bash(cd /c/interop io intelligence/interop io intelligence/interop-ai-lab)",
+      "Bash(cd /c/interop-trader)",
       "Bash(python mock_app/serve_mock.py:*)",
       "Bash(python:*)",
       "Bash(findstr:*)",
