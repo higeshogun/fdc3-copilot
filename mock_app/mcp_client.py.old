@@ -1,0 +1,191 @@
+"""
+MCP Client for IB_MCP Server
+
+Connects to the IB_MCP server (rcontesti/IB_MCP) via HTTP Streamable transport.
+The MCP protocol uses JSON-RPC style messages.
+
+IB_MCP exposes these routers as MCP tools:
+- alerts, contract, market_data, options_chains
+- order_monitoring, orders, portfolio, scanner
+- session, watchlists
+"""
+
+import requests
+import json
+from typing import Optional
+
+MCP_URL = "http://localhost:5002/mcp/"
+
+
+class MCPClient:
+    """Client for IB_MCP server using MCP HTTP transport"""
+
+    def __init__(self, base_url: str = MCP_URL):
+        self.base_url = base_url
+        self.session = requests.Session()
+        self._request_id = 0
+
+    def _next_id(self) -> int:
+        """Get next request ID for JSON-RPC"""
+        self._request_id += 1
+        return self._request_id
+
+    def call_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
+        """
+        Execute an MCP tool via JSON-RPC
+
+        Args:
+            tool_name: Name of the MCP tool to call
+            arguments: Optional dict of arguments to pass to the tool
+
+        Returns:
+            Result dict from the MCP server
+        """
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments or {}
+            },
+            "id": self._next_id()
+        }
+
+        try:
+            response = self.session.post(
+                self.base_url,
+                json=payload,
+                timeout=30,
+                headers={"Content-Type": "application/json"}
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            if "error" in result:
+                return {"error": result["error"]}
+
+            return result.get("result", {})
+
+        except requests.exceptions.ConnectionError:
+            return {"error": "Cannot connect to MCP server. Is IB_MCP running on port 5002?"}
+        except requests.exceptions.Timeout:
+            return {"error": "MCP request timed out"}
+        except requests.exceptions.RequestException as e:
+            return {"error": f"MCP request failed: {str(e)}"}
+        except json.JSONDecodeError:
+            return {"error": "Invalid JSON response from MCP server"}
+
+    def list_tools(self) -> list:
+        """
+        Get available MCP tools
+
+        Returns:
+            List of tool definitions from the MCP server
+        """
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/list",
+            "params": {},
+            "id": self._next_id()
+        }
+
+        try:
+            response = self.session.post(
+                self.base_url,
+                json=payload,
+                timeout=10,
+                headers={"Content-Type": "application/json"}
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            if "error" in result:
+                return []
+
+            return result.get("result", {}).get("tools", [])
+
+        except Exception:
+            return []
+
+    def is_available(self) -> bool:
+        """Check if MCP server is reachable"""
+        try:
+            response = self.session.get(
+                self.base_url.rstrip('/'),
+                timeout=5
+            )
+            return response.status_code in (200, 404, 405)  # Server is up
+        except Exception:
+            return False
+
+    # ═══════════════════════════════════════════════════════════
+    # HIGH-LEVEL TRADING METHODS
+    # These map to specific IB_MCP tools
+    # ═══════════════════════════════════════════════════════════
+
+    def get_positions(self) -> dict:
+        """Get current portfolio positions"""
+        return self.call_tool("get_portfolio_positions")
+
+    def get_account_summary(self) -> dict:
+        """Get account balance and buying power"""
+        return self.call_tool("get_portfolio_account_summary")
+
+    def place_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        order_type: str = "MKT",
+        limit_price: Optional[float] = None,
+        conid: Optional[int] = None
+    ) -> dict:
+        """
+        Place a stock order through Interactive Brokers
+
+        Args:
+            symbol: Stock symbol (e.g., AAPL)
+            side: BUY or SELL
+            quantity: Number of shares
+            order_type: MKT (market) or LMT (limit)
+            limit_price: Required for limit orders
+            conid: Contract ID (will be looked up if not provided)
+
+        Returns:
+            Order result from IB_MCP
+        """
+        # Build order arguments based on IB_MCP's expected format
+        arguments = {
+            "symbol": symbol,
+            "side": side.upper(),
+            "quantity": quantity,
+            "order_type": order_type.upper()
+        }
+
+        if conid:
+            arguments["conid"] = conid
+
+        if order_type.upper() == "LMT" and limit_price is not None:
+            arguments["limit_price"] = limit_price
+
+        return self.call_tool("place_order", arguments)
+
+    def cancel_order(self, order_id: str) -> dict:
+        """Cancel a pending order"""
+        return self.call_tool("cancel_order", {"order_id": order_id})
+
+    def get_orders(self) -> dict:
+        """Get current orders"""
+        return self.call_tool("get_live_orders")
+
+    def search_contract(self, symbol: str) -> dict:
+        """Search for a contract by symbol"""
+        return self.call_tool("search_contract", {"symbol": symbol})
+
+    def get_market_data(self, conid: int) -> dict:
+        """Get market data snapshot for a contract"""
+        return self.call_tool("get_market_data_snapshot", {"conid": conid})
+
+
+# Singleton instance
+mcp_client = MCPClient()

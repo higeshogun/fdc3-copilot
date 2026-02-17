@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run dev:*)",
+      "Bash(timeout:*)",
+      "Bash(npm run build:*)",
+      "Bash(.venvScriptspython.exe mock_appserve_mock.py)",
+      "Bash(ping:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(.venv/Scripts/pip.exe install:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(python serve_mock.py:*)",
+      "Bash(git clone:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker version:*)",
+      "Bash(docker logs:*)",
+      "Bash(git config:*)",
+      "Bash(git checkout:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker start:*)",
+      "Bash(docker exec:*)",
+      "Bash(cd /c/interop io intelligence/interop io intelligence/interop-ai-lab)",
+      "Bash(python mock_app/serve_mock.py:*)",
+      "Bash(python:*)",
+      "Bash(findstr:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(start_stack.bat)",
+      "Bash(cmd.exe /c start_stack.bat)",
+      "Bash(for:*)",
+      "Bash(do sleep 2 if netstat -ano)",
+      "Bash(then echo \"Server is up!\" curl -s http://localhost:5500/all_status exit 0 fi echo \"Waiting... \\($i/10\\)\" done echo \"Server did not start within 20 seconds\")",
+      "Bash(tasklist:*)",
+      "Bash(powershell -File -:*)"
+    ]
+  }
+}

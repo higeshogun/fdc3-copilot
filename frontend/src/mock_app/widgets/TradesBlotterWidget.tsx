@@ -1,13 +1,90 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSimulationStore, getTickerPrecision } from '../store/useSimulationStore';
+import { API_BASE_URL } from '../config';
 
 const TradesBlotterWidget = () => {
-    const { trades, selectTrade } = useSimulationStore();
+    // Keep store for selection but fetch data from IBKR
+    const { trades: simTrades, selectTrade } = useSimulationStore();
+    const [ibkrTrades, setIbkrTrades] = useState<any[]>([]);
+    const [useLive] = useState(true);
+
     const [sortKey, setSortKey] = useState<string>('time');
     const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
     const [colWidths, setColWidths] = useState({
-        time: 70, execId: 70, orderId: 70, side: 50, sym: 60, qty: 70, px: 70, cpty: 60, settle: 80
+        time: 140, execId: 80, orderId: 80, side: 50, sym: 80, secType: 70, qty: 70, px: 80, commission: 90, netAmount: 110, exchange: 90
     });
+
+    // Poll IBKR Orders (Filled)
+    useEffect(() => {
+        if (!useLive) return;
+
+        const fetchTrades = async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/mcp/orders`);
+                const data = await res.json();
+
+                let ordersList: any[] = [];
+
+                if (Array.isArray(data)) {
+                    ordersList = data;
+                } else if (data && data.orders) {
+                    if (Array.isArray(data.orders)) {
+                        ordersList = data.orders;
+                    } else if (data.orders.orders && Array.isArray(data.orders.orders)) {
+                        ordersList = data.orders.orders;
+                    }
+                }
+
+                if (ordersList.length > 0) {
+                    // Filter for filled orders to mock the 'Trades' view
+                    const filledOrders = ordersList.filter((o: any) => o.status === 'Filled' || o.filledQuantity > 0);
+
+                    const formatIBKRTime = (raw: string | number | undefined) => {
+                        if (!raw) return new Date().toLocaleString();
+                        const d = new Date(raw);
+                        if (!isNaN(d.getTime())) return d.toLocaleString();
+                        // Handle IBKR raw YYMMDDHHMMSS
+                        if (typeof raw === 'string' && raw.length === 12 && !isNaN(Number(raw))) {
+                            const year = 2000 + parseInt(raw.substring(0, 2));
+                            const month = parseInt(raw.substring(2, 4)) - 1;
+                            const day = parseInt(raw.substring(4, 6));
+                            const hour = parseInt(raw.substring(6, 8));
+                            const min = parseInt(raw.substring(8, 10));
+                            const sec = parseInt(raw.substring(10, 12));
+                            return new Date(year, month, day, hour, min, sec).toLocaleString();
+                        }
+                        return String(raw);
+                    };
+
+                    const mappedTrades = filledOrders.map((o: any) => ({
+                        execId: `EX-${o.orderId}`,
+                        orderId: o.orderId,
+                        time: formatIBKRTime(o.lastExecutionTime_r || o.lastExecutionTime || o.time),
+                        side: o.side || (o.action === 'BUY' ? 'BUY' : 'SELL'),
+                        symbol: o.ticker || o.symbol || 'UNK',
+                        secType: o.secType || o.assetClass || 'STK',
+                        qty: o.filledQuantity || o.totalSize || 0,
+                        price: o.avgPrice || o.avgCost || 0,
+                        commission: o.commission || 0,
+                        netAmount: (o.filledQuantity || o.totalSize || 0) * (o.avgPrice || o.avgCost || 0),
+                        exchange: o.exchange || o.listingExchange || '',
+                        account: o.acct || o.account || '',
+                        cpty: 'IBKR',
+                        settleDate: 'T+2'
+                    }));
+                    setIbkrTrades(mappedTrades);
+                } else {
+                    setIbkrTrades([]);
+                }
+            } catch (err) {
+                console.error("Failed to fetch IBKR trades", err);
+            }
+        };
+
+        fetchTrades();
+        const interval = setInterval(fetchTrades, 5000); // Poll slower for trades
+        return () => clearInterval(interval);
+    }, [useLive]);
 
     const handleSort = (key: string) => {
         if (sortKey === key) {
@@ -33,8 +110,10 @@ const TradesBlotterWidget = () => {
         document.addEventListener('mouseup', onMouseUp);
     };
 
+    const activeTrades = useLive ? ibkrTrades : simTrades;
+
     const sortedTrades = useMemo(() => {
-        const data = [...trades];
+        const data = [...activeTrades];
         if (sortKey) {
             data.sort((a, b) => {
                 const vA = a[sortKey as keyof typeof a];
@@ -46,7 +125,7 @@ const TradesBlotterWidget = () => {
             });
         }
         return data;
-    }, [trades, sortKey, sortDir]);
+    }, [activeTrades, sortKey, sortDir]);
 
     const renderHeaderCell = (label: string, col: keyof typeof colWidths, sortId: string, align: 'left' | 'right' | 'center' = 'left') => (
         <th
@@ -73,38 +152,46 @@ const TradesBlotterWidget = () => {
                         {renderHeaderCell("EXEC ID", "execId", "execId")}
                         {renderHeaderCell("ORD ID", "orderId", "orderId")}
                         {renderHeaderCell("SIDE", "side", "side")}
-                        {renderHeaderCell("SYM", "sym", "symbol")}
+                        {renderHeaderCell("SYMBOL", "sym", "symbol")}
+                        {renderHeaderCell("SEC TYPE", "secType", "secType")}
                         {renderHeaderCell("QTY", "qty", "qty", "right")}
                         {renderHeaderCell("FILL PX", "px", "price", "right")}
-                        {renderHeaderCell("CPTY", "cpty", "cpty")}
-                        {renderHeaderCell("SETTLE", "settle", "settleDate")}
+                        {renderHeaderCell("COMMISSION", "commission", "commission", "right")}
+                        {renderHeaderCell("NET AMOUNT", "netAmount", "netAmount", "right")}
+                        {renderHeaderCell("EXCHANGE", "exchange", "exchange")}
                     </tr>
                 </thead>
                 <tbody>
-                    {sortedTrades.map(trade => (
-                        <tr
-                            key={trade.execId}
-                            onClick={() => selectTrade(trade)}
-                            className="border-b border-[var(--border-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
-                        >
-                            <td className="p-2 text-[var(--text-secondary)] truncate">{trade.time}</td>
-                            <td className="p-2 text-[var(--text-secondary)] opacity-60 truncate">{trade.execId}</td>
-                            <td className="p-2 text-[var(--text-secondary)] opacity-60 truncate">{trade.orderId}</td>
-                            <td className={`p-2 font-bold ${trade.side === 'BUY' ? 'text-[var(--success-color)]' : 'text-[var(--danger-color)]'}`}>{trade.side}</td>
-                            <td className="p-2 text-[var(--text-primary)] truncate">{trade.symbol}</td>
-                            <td className="p-2 text-right text-[var(--text-secondary)] tabular-nums">{trade.qty.toLocaleString()}</td>
-                            <td className="p-2 text-right text-[var(--text-secondary)] tabular-nums">
-                                {trade.price.toFixed(getTickerPrecision(trade.symbol))}
-                            </td>
-                            <td className="p-2 text-[var(--text-secondary)] truncate">{trade.cpty}</td>
-                            <td className="p-2 text-[var(--text-secondary)] opacity-60 font-mono truncate">{trade.settleDate}</td>
-                        </tr>
-                    ))}
                     {sortedTrades.length === 0 && (
                         <tr>
-                            <td colSpan={9} className="p-4 text-center text-gray-500 italic">No executed trades found.</td>
+                            <td colSpan={11} className="p-4 text-center text-[var(--text-tertiary)] italic">No executed trades found.</td>
                         </tr>
                     )}
+                    {sortedTrades.map((trade, idx) => (
+                        <tr
+                            key={trade.execId || idx}
+                            onClick={() => selectTrade && selectTrade(trade)}
+                            className="border-b border-[var(--border-primary)] hover:bg-[var(--bg-tertiary)] cursor-pointer"
+                        >
+                            <td className="p-2 text-[var(--text-secondary)] text-[10px] truncate">{trade.time}</td>
+                            <td className="p-2 text-[var(--text-secondary)] opacity-60 text-[10px] truncate">{trade.execId}</td>
+                            <td className="p-2 text-[var(--text-secondary)] opacity-60 text-[10px] truncate">{trade.orderId}</td>
+                            <td className={`p-2 font-bold ${trade.side === 'BUY' ? 'text-[var(--success-color)]' : 'text-[var(--danger-color)]'}`}>{trade.side}</td>
+                            <td className="p-2 text-[var(--text-primary)] font-medium truncate">{trade.symbol}</td>
+                            <td className="p-2 text-[var(--text-secondary)] text-[10px] truncate">{trade.secType}</td>
+                            <td className="p-2 text-right text-[var(--text-secondary)] tabular-nums">{Number(trade.qty).toLocaleString()}</td>
+                            <td className="p-2 text-right text-[var(--text-secondary)] tabular-nums">
+                                {trade.price ? Number(trade.price).toFixed(getTickerPrecision(trade.symbol)) : '0.00'}
+                            </td>
+                            <td className="p-2 text-right text-[var(--text-secondary)] tabular-nums">
+                                ${Number(trade.commission).toFixed(2)}
+                            </td>
+                            <td className="p-2 text-right text-[var(--text-primary)] font-medium tabular-nums">
+                                ${Number(trade.netAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="p-2 text-[var(--text-secondary)] text-[10px] truncate">{trade.exchange || '-'}</td>
+                        </tr>
+                    ))}
                 </tbody>
             </table>
         </div>

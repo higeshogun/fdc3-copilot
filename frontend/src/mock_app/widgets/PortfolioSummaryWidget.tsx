@@ -27,28 +27,28 @@ const PortfolioSummaryWidget = () => {
 
     return (
         <div className="h-full flex flex-col justify-center p-4 bg-[var(--bg-secondary)]">
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-[var(--bg-primary)] p-3 rounded border border-[var(--border-primary)] shadow-sm">
                     <div className="text-[var(--text-secondary)] text-[10px] font-bold uppercase mb-1">NET LIQUIDATION</div>
-                    <div className="text-xl font-bold text-[var(--text-primary)]">
+                    <div className="text-base md:text-xl font-bold text-[var(--text-primary)]">
                         ${Math.floor(netLiq).toLocaleString()}
                     </div>
                 </div>
                 <div className="bg-[var(--bg-primary)] p-3 rounded border border-[var(--border-primary)] shadow-sm">
                     <div className="text-[var(--text-secondary)] text-[10px] font-bold uppercase mb-1">UNREALIZED P/L</div>
-                    <div className={`text-xl font-bold ${stats.totalPL >= 0 ? 'text-[var(--success-color)]' : 'text-[var(--danger-color)]'}`}>
+                    <div className={`text-base md:text-xl font-bold ${stats.totalPL >= 0 ? 'text-[var(--success-color)]' : 'text-[var(--danger-color)]'}`}>
                         {stats.totalPL >= 0 ? '+' : ''}${Math.floor(stats.totalPL).toLocaleString()}
                     </div>
                 </div>
                 <div className="bg-[var(--bg-primary)] p-3 rounded border border-[var(--border-primary)] shadow-sm">
                     <div className="text-[var(--text-secondary)] text-[10px] font-bold uppercase mb-1">GROSS EXPOSURE</div>
-                    <div className="text-xl font-bold text-[var(--text-primary)]">
+                    <div className="text-base md:text-xl font-bold text-[var(--text-primary)]">
                         ${Math.floor(stats.exposure).toLocaleString()}
                     </div>
                 </div>
                 <div className="bg-[var(--bg-primary)] p-3 rounded border border-[var(--border-primary)] shadow-sm">
                     <div className="text-[var(--text-secondary)] text-[10px] font-bold uppercase mb-1">PORTFOLIO BETA</div>
-                    <div className="text-xl font-bold text-[var(--accent-color)]">
+                    <div className="text-base md:text-xl font-bold text-[var(--accent-color)]">
                         {portfolioBeta.toFixed(2)}
                     </div>
                 </div>

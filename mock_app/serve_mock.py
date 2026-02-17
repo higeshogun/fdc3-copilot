@@ -28,13 +28,105 @@ def log_to_file(message):
 app = Flask(__name__)
 CORS(app)
 
+
 # ═══════════════════════════════════════════════════════════
 # PENDING TRADES STORAGE (for AI-proposed trades awaiting confirmation)
 # ═══════════════════════════════════════════════════════════
 pending_trades = {}  # token -> trade_proposal
-simulated_orders = []
-simulated_positions = {}
-simulated_lock = threading.Lock()
+
+# ═══════════════════════════════════════════════════════════
+# IBKR TOOLS DEFINITION (OpenAI Function Calling Format)
+# ═══════════════════════════════════════════════════════════
+IBKR_TOOLS_OPENAI = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_orders",
+            "description": "Get list of current orders from Interactive Brokers",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_positions",
+            "description": "Get current portfolio positions from Interactive Brokers",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_account_summary",
+            "description": "Get account balance and buying power from Interactive Brokers",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "place_order",
+            "description": "Place a BUY or SELL order (requires user confirmation before execution)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "The ticker symbol (e.g., AAPL, EUR/USD)"
+                    },
+                    "side": {
+                        "type": "string",
+                        "enum": ["BUY", "SELL"],
+                        "description": "Order side"
+                    },
+                    "quantity": {
+                        "type": "number",
+                        "description": "Number of shares/contracts"
+                    },
+                    "order_type": {
+                        "type": "string",
+                        "enum": ["MARKET", "LIMIT"],
+                        "description": "Order type"
+                    },
+                    "price": {
+                        "type": "number",
+                        "description": "Limit price (required for LIMIT orders)"
+                    }
+                },
+                "required": ["symbol", "side", "quantity", "order_type"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_order",
+            "description": "Cancel a pending order",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {
+                        "type": "string",
+                        "description": "The order ID to cancel"
+                    }
+                },
+                "required": ["order_id"]
+            }
+        }
+    }
+]
 
 # ═══════════════════════════════════════════════════════════
 # IBKR PROXY CONFIGURATION
@@ -515,28 +607,30 @@ def mcp_tools():
 
 @app.route('/mcp/positions')
 def mcp_positions():
-    """Get current positions from IBKR via MCP, merged with simulated FX"""
-    result = mcp_client.get_positions()
-    
-    # Simulation removed
-    return jsonify(result)
-            
-    return jsonify(result)
+    """Get current positions from IBKR via MCP"""
+    try:
+        result = mcp_client.get_positions()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/mcp/account')
 def mcp_account():
     """Get account summary from IBKR via MCP"""
-    result = mcp_client.get_account_summary()
-    return jsonify(result)
+    try:
+        result = mcp_client.get_account_summary()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/mcp/orders')
 def mcp_orders():
-    """Get current orders from IBKR via MCP, merged with simulated FX"""
-    result = mcp_client.get_orders()
-    
-    return jsonify(result)
-            
-    return jsonify(result)
+    """Get current orders from IBKR via MCP"""
+    try:
+        result = mcp_client.get_orders()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/mcp/search')
 def mcp_search():
@@ -1146,11 +1240,98 @@ def send_assets(path):
     return send_from_directory(os.path.join(app.static_folder, 'assets'), path)
 
 
+def parse_openai_sse(resp):
+    """
+    Parse OpenAI-compatible SSE streaming response.
+    Yields text strings for each content delta.
+    Works with OpenAI, local LLMs (LM Studio, Ollama, llama.cpp).
+    """
+    for line in resp.iter_lines():
+        if not line:
+            continue
+        line_str = line.decode('utf-8').strip() if isinstance(line, bytes) else line.strip()
+        if not line_str.startswith("data: "):
+            continue
+        content = line_str[6:]
+        if content == "[DONE]":
+            break
+        try:
+            chunk = json.loads(content)
+            choices = chunk.get('choices', [])
+            if choices:
+                delta = choices[0].get('delta', {})
+                text = delta.get('content', '')
+                if text:
+                    yield text
+        except Exception:
+            pass
+
+
+def parse_gemini_sse(resp):
+    """
+    Parse Gemini SSE streaming response, handling multi-line JSON events.
+    Yields text strings for each text chunk found.
+    Gemini 2.5+ models may send multi-line JSON in SSE data events.
+    """
+    event_data = ""
+    event_count = 0
+    text_count = 0
+
+    def _try_parse_event(data):
+        nonlocal text_count
+        try:
+            chunk = json.loads(data)
+            parts = chunk.get('candidates', [{}])[0].get('content', {}).get('parts', [])
+            for part in parts:
+                text = part.get('text', '')
+                if text:
+                    text_count += 1
+                    return text
+        except Exception as e:
+            log_to_file(f"[Gemini SSE] Parse error: {e} | Data: {data[:200]}")
+        return None
+
+    for line in resp.iter_lines():
+        if not line:  # Empty line = end of SSE event
+            if event_data:
+                event_count += 1
+                text = _try_parse_event(event_data)
+                if text:
+                    yield text
+                event_data = ""
+        else:
+            line_str = line.decode('utf-8') if isinstance(line, bytes) else line
+            if line_str.startswith('data: '):
+                # If we already have pending data, flush it first (back-to-back events without blank line)
+                if event_data:
+                    event_count += 1
+                    text = _try_parse_event(event_data)
+                    if text:
+                        yield text
+                event_data = line_str[6:]
+            elif event_data:
+                # Continuation of multi-line JSON data
+                event_data += line_str
+
+    # Handle final event (may not have trailing blank line)
+    if event_data:
+        event_count += 1
+        text = _try_parse_event(event_data)
+        if text:
+            yield text
+
+    log_to_file(f"[Gemini SSE] Done: {event_count} events, {text_count} text chunks")
+
+
 def gemini_call(prompt, api_key, model, temp, system_prompt, stream=False, enable_tools=False):
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:{'streamGenerateContent' if stream else 'generateContent'}?key={api_key}"
+        # Use SSE format for streaming (easier to parse than JSON array)
+        if stream:
+            url += "&alt=sse"
         payload = {
-            "contents": [{"parts": [{"text": f"{system_prompt}\n\n{prompt}"}]}],
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": temp}
         }
 
@@ -1166,12 +1347,12 @@ def gemini_call(prompt, api_key, model, temp, system_prompt, stream=False, enabl
     except requests.exceptions.RequestException as e:
         raise Exception(f"Gemini Network Error: {str(e)}")
 
-def openai_call(prompt, api_key, model, temp, system_prompt, base_url, stream=False):
+def openai_call(prompt, api_key, model, temp, system_prompt, base_url, stream=False, tools=None):
     try:
         base_url = base_url.rstrip('/')
         if not base_url.endswith('/v1'):
              base_url += '/v1'
-        
+
         url = f"{base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}"}
         payload = {
@@ -1183,12 +1364,20 @@ def openai_call(prompt, api_key, model, temp, system_prompt, base_url, stream=Fa
             "temperature": temp,
             "stream": stream
         }
+
+        # Add tools if provided (for function calling)
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
         resp = requests.post(url, headers=headers, json=payload, timeout=120, stream=stream)
         if resp.status_code == 200:
             if stream: return resp
-            content = resp.json()['choices'][0]['message']['content']
-            log_to_file(f"[LLM Success] Received content: {content[:50]}...")
-            return content
+            result = resp.json()
+            message = result['choices'][0]['message']
+            # Return full message (may contain tool_calls)
+            log_to_file(f"[LLM Success] Received message: {str(message)[:100]}...")
+            return message
         log_to_file(f"[LLM Error] Status {resp.status_code}: {resp.text}")
         raise Exception(f"OpenAI/Local {resp.status_code}: {resp.text}")
     except requests.exceptions.ConnectionError:
@@ -1232,24 +1421,30 @@ def process_analysis(query, logs, config, stream=False, enable_trading=True):
     system_prompt = config.get('prompt', 'You are an expert financial AI assistant.')
     base_url = config.get('url', '')
 
-    # Enhance system prompt with trading capabilities if enabled
+    # Enhance system prompt with IBKR tool instructions when trading is enabled
     enhanced_system_prompt = system_prompt
-    if enable_trading and provider == 'gemini':
-        enhanced_system_prompt += """
+    tool_addendum = """
 
-You have access to Interactive Brokers trading capabilities through these functions:
-- place_order: Place BUY or SELL orders (will require user confirmation before execution)
-- get_positions: Get current portfolio positions
-- get_account_summary: Get account balance and buying power
-- get_orders: Get list of current orders
-- cancel_order: Cancel a pending order
+IBKR TOOL USAGE (MANDATORY):
+You have live access to Interactive Brokers. Call these tools — do NOT guess or fabricate data.
 
-IMPORTANT RULES FOR MCP MODE:
-1. PRIORITIZE DATA: When you call a tool, the data returned is the ground truth. Base your answer PRIMARILY on this data.
-2. EXPLICITLY MENTION TOOLS: When you use a tool, start your response by saying "I am calling the [tool_name] tool..." or "Using [tool_name] data...".
-3. When the user asks to place a trade, use the place_order function. The trade will be proposed for confirmation before execution.
-4. When asked about positions, account info, or orders, use the appropriate function to get real-time data from IBKR.
+| Tool | Use when asked about |
+|------|---------------------|
+| get_positions | Holdings, portfolio, "what do I own", P&L |
+| get_orders | Open/pending/recent orders, order status |
+| get_account_summary | Balance, buying power, margin, net liquidation, equity |
+| place_order | Buying or selling (always requires user confirmation) |
+| cancel_order | Cancelling a pending order |
+
+RULES:
+1. ALWAYS call the appropriate tool before answering data questions. Tool output is ground truth.
+2. NEVER invent positions, prices, balances, or order IDs. If a tool call fails, tell the user.
+3. FDC3 logs show UI activity (clicks, selections) and periodic portfolio.summary snapshots. They are contextual — not authoritative for current holdings. Always prefer tool data.
+4. Present tool results clearly: use tables for multiple items, include quantities and prices.
+5. For trade suggestions, state the instrument, side, quantity, order type, and your rationale.
 """
+    if enable_trading:
+        enhanced_system_prompt += tool_addendum
 
     log_context = ""
     for entry in logs:
@@ -1266,7 +1461,9 @@ IMPORTANT RULES FOR MCP MODE:
         if not api_key and provider != 'local':
              yield f"data: {json.dumps({'error': 'API Key Missing'})}\n\n"
              return
-             
+
+        log_to_file(f"[Native Stream] Starting: provider={provider}, model={model_name}, trading={enable_trading}")
+
         try:
             target_resp = None
             if provider == 'gemini':
@@ -1279,91 +1476,100 @@ IMPORTANT RULES FOR MCP MODE:
                         content = candidate.get('content', {})
                         parts = content.get('parts', [])
 
-                        for part in parts:
-                            # Check for function call
-                            if 'functionCall' in part:
-                                func_call = part['functionCall']
-                                tool_name = func_call.get('name')
-                                arguments = func_call.get('args', {})
+                        # Scan ALL parts for function calls first (Gemini 2.5+ may return text + functionCall together)
+                        func_call_part = next((p for p in parts if 'functionCall' in p), None)
+                        text_parts = [p.get('text', '') for p in parts if 'text' in p and p.get('text')]
 
-                                log_to_file(f"[MCP-MW] [Function Call] {tool_name}: {arguments}")
+                        if func_call_part:
+                            func_call = func_call_part['functionCall']
+                            tool_name = func_call.get('name')
+                            arguments = func_call.get('args', {})
 
-                                # Execute the tool
-                                tool_result = execute_tool_call(tool_name, arguments)
+                            log_to_file(f"[MCP-MW] [Function Call] {tool_name}: {arguments}")
 
-                                # If it's a pending trade, send special response
-                                if tool_result.get('type') == 'pending_trade':
-                                    yield f"data: {json.dumps({'pending_trade': tool_result})}\n\n"
-                                    yield f"data: {json.dumps({'text': tool_result['message']})}\n\n"
-                                else:
-                                    # For data queries, send the result and then call LLM again to summarize
-                                    tool_result_str = json.dumps(tool_result, indent=2)
+                            # Stream any preamble text (e.g. "I am calling get_orders...")
+                            for t in text_parts:
+                                yield f"data: {json.dumps({'text': t + chr(10) + chr(10)})}\n\n"
 
-                                    # Make follow-up call to LLM to summarize the data
-                                    summary_prompt = f"User asked: {query}\n\nHere is the data from IBKR:\n{tool_result_str}\n\nPlease provide a clear, formatted summary of this data for the user."
-                                    summary_resp = gemini_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, stream=True, enable_tools=False)
+                            # Execute the tool
+                            tool_result = execute_tool_call(tool_name, arguments)
 
-                                    for line in summary_resp.iter_lines():
-                                        if line:
-                                            try:
-                                                chunk = json.loads(line.decode('utf-8'))
-                                                text = chunk.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-                                                if text:
-                                                    yield f"data: {json.dumps({'text': text})}\n\n"
-                                            except Exception as e:
-                                                print(f"Error parsing summary chunk: {e}")
-                                return
+                            # If it's a pending trade, send special response
+                            if tool_result.get('type') == 'pending_trade':
+                                yield f"data: {json.dumps({'pending_trade': tool_result})}\n\n"
+                                yield f"data: {json.dumps({'text': tool_result['message']})}\n\n"
+                            elif tool_result.get('error'):
+                                # Tool returned an error — show it directly
+                                err_msg = tool_result['error']
+                                log_to_file(f"[Native Stream] Tool error: {err_msg}")
+                                yield f"data: {json.dumps({'text': 'IBKR Error: ' + err_msg})}\n\n"
+                            else:
+                                # For data queries, call LLM again to summarize
+                                tool_result_str = json.dumps(tool_result, indent=2)
+                                summary_prompt = f"User asked: {query}\n\nHere is the data from IBKR:\n{tool_result_str}\n\nPlease provide a clear, formatted summary of this data for the user."
+                                summary_resp = gemini_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, stream=True, enable_tools=False)
 
-                            # Regular text response
-                            elif 'text' in part:
-                                text = part['text']
-                                if text:
+                                got_text = False
+                                for text in parse_gemini_sse(summary_resp):
+                                    got_text = True
                                     yield f"data: {json.dumps({'text': text})}\n\n"
+                                if not got_text:
+                                    yield f"data: {json.dumps({'text': f'IBKR Data:\\n```json\\n{tool_result_str}\\n```'})}\n\n"
+                        elif text_parts:
+                            # No function call — just stream the text
+                            for t in text_parts:
+                                yield f"data: {json.dumps({'text': t})}\n\n"
 
                     except Exception as e:
                         print(f"Function calling error, falling back to regular: {e}")
                         # Fall back to regular streaming
                         target_resp = gemini_call(prompt, api_key, model_name, temp, system_prompt, stream=True)
-                        for line in target_resp.iter_lines():
-                            if line:
-                                try:
-                                    chunk = json.loads(line.decode('utf-8'))
-                                    text = chunk.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-                                    if text:
-                                        yield f"data: {json.dumps({'text': text})}\n\n"
-                                except Exception as e:
-                                    print(f"Error parsing Gemini chunk: {e}")
+                        for text in parse_gemini_sse(target_resp):
+                            yield f"data: {json.dumps({'text': text})}\n\n"
                 else:
                     # No function calling, regular streaming
                     target_resp = gemini_call(prompt, api_key, model_name, temp, system_prompt, stream=True)
-                    for line in target_resp.iter_lines():
-                        if line:
+                    for text in parse_gemini_sse(target_resp):
+                        yield f"data: {json.dumps({'text': text})}\n\n"
+            else:
+                # OpenAI / Local LLM path
+                if enable_trading:
+                    # Query-based intent detection — local LLMs are unreliable with tool calling,
+                    # so detect common IBKR data questions and call tools directly
+                    query_lower = query.lower()
+                    direct_tool = None
+                    if any(kw in query_lower for kw in ['position', 'holding', 'portfolio', 'what do i own', 'what do i hold', 'my stock']):
+                        direct_tool = 'get_positions'
+                    elif any(kw in query_lower for kw in ['order', 'pending', 'open order', 'my order']):
+                        direct_tool = 'get_orders'
+                    elif any(kw in query_lower for kw in ['account', 'balance', 'buying power', 'margin', 'equity', 'net liquid']):
+                        direct_tool = 'get_account_summary'
+
+                    if direct_tool:
+                        log_to_file(f"[Local LLM] Query intent detected → {direct_tool}")
+                        tool_result = execute_tool_call(direct_tool, {})
+                        if tool_result.get('error'):
+                            yield f"data: {json.dumps({'text': 'IBKR Error: ' + tool_result['error']})}\n\n"
+                        else:
+                            tool_result_str = json.dumps(tool_result, indent=2)
+                            summary_prompt = f"User asked: {query}\n\nHere is the real-time data from Interactive Brokers:\n{tool_result_str}\n\nProvide a clear, formatted summary. Only use the data above — do NOT make up any numbers or positions."
                             try:
-                                chunk = json.loads(line.decode('utf-8'))
-                                text = chunk.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-                                if text:
+                                summary_resp = openai_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, base_url, stream=True)
+                                for text in parse_openai_sse(summary_resp):
                                     yield f"data: {json.dumps({'text': text})}\n\n"
                             except Exception as e:
-                                print(f"Error parsing Gemini chunk: {e}")
-            else:
-                target_resp = openai_call(prompt, api_key, model_name, temp, system_prompt, base_url, stream=True)
-                for line in target_resp.iter_lines():
-                    if line:
-                        line_str = line.decode('utf-8').strip()
-                        if line_str.startswith("data: "):
-                            content = line_str[6:]
-                            if content == "[DONE]": break
-                            try:
-                                chunk = json.loads(content)
-                                choices = chunk.get('choices', [])
-                                if choices:
-                                    delta = choices[0].get('delta', {})
-                                    text = delta.get('content', '')
-                                    if text:
-                                        # print(f"Streaming [OpenAI/Local]: {text[:20]}...")
-                                        yield f"data: {json.dumps({'text': text})}\n\n"
-                            except Exception as e:
-                                print(f"Error parsing OpenAI chunk: {e} | Line: {line_str}")
+                                log_to_file(f"[Local LLM] Summary failed: {e}")
+                                yield f"data: {json.dumps({'text': f'IBKR Data:\\n```json\\n{tool_result_str}\\n```'})}\n\n"
+                    else:
+                        # No direct intent match — just stream from LLM directly
+                        target_resp = openai_call(prompt, api_key, model_name, temp, enhanced_system_prompt, base_url, stream=True)
+                        for text in parse_openai_sse(target_resp):
+                            yield f"data: {json.dumps({'text': text})}\n\n"
+                else:
+                    # No trading enabled, just stream
+                    target_resp = openai_call(prompt, api_key, model_name, temp, system_prompt, base_url, stream=True)
+                    for text in parse_openai_sse(target_resp):
+                        yield f"data: {json.dumps({'text': text})}\n\n"
         except Exception as inner_e:
             print(f"Streaming Exception: {inner_e}")
             yield f"data: {json.dumps({'error': str(inner_e)})}\n\n"
@@ -1371,40 +1577,137 @@ IMPORTANT RULES FOR MCP MODE:
     if stream:
         return stream_generator()
     else:
-        # NON-STREAMING Implementation
-        if provider == 'gemini':
-            response = gemini_call(prompt, api_key, model_name, temp, enhanced_system_prompt, enable_tools=enable_trading)
-            candidate = response.get('candidates', [{}])[0]
-            content = candidate.get('content', {})
-            parts = content.get('parts', [])
+        # NON-STREAMING Implementation (MCP mode) - uses function calling
+        try:
+            if provider == 'gemini':
+                # Call Gemini with function calling enabled
+                response = gemini_call(prompt, api_key, model_name, temp, enhanced_system_prompt, enable_tools=enable_trading)
+                log_to_file(f"[Gemini] Raw response: {json.dumps(response)[:500]}")
 
-            for part in parts:
-                if 'functionCall' in part:
-                    func_call = part['functionCall']
+                candidate = response.get('candidates', [{}])[0]
+                content = candidate.get('content', {})
+                parts = content.get('parts', [])
+
+                # Scan ALL parts for function calls first (Gemini 2.5+ returns text + functionCall together)
+                func_call_part = next((p for p in parts if 'functionCall' in p), None)
+                text_parts = [p.get('text', '') for p in parts if 'text' in p and p.get('text')]
+                preamble = "\n\n".join(text_parts)
+
+                if func_call_part:
+                    func_call = func_call_part['functionCall']
                     tool_name = func_call.get('name')
                     arguments = func_call.get('args', {})
+
+                    log_to_file(f"[Gemini] Function call: {tool_name}({arguments})")
                     tool_result = execute_tool_call(tool_name, arguments)
 
                     if tool_result.get('type') == 'pending_trade':
                         return {
-                            "analysis": tool_result['message'],
+                            "analysis": (preamble + "\n\n" + tool_result['message']).strip(),
                             "pending_trade": tool_result
                         }
-                    else:
-                        return {
-                            "analysis": f"IBKR Data:\n```json\n{json.dumps(tool_result, indent=2)}\n```"
-                        }
 
-                elif 'text' in part:
-                    return {"analysis": part['text']}
+                    if tool_result.get('error'):
+                        err_msg = f"IBKR Error: {tool_result['error']}"
+                        return {"analysis": (preamble + "\n\n" + err_msg).strip() if preamble else err_msg}
 
-            return {"analysis": "No response from AI."}
-        else:
-            try:
-                result = openai_call(prompt, api_key, model_name, temp, system_prompt, base_url)
-                return {"analysis": result}
-            except Exception as e:
-                return {"analysis": f"Error: {str(e)}"}
+                    # Second call to summarize the tool result
+                    tool_result_str = json.dumps(tool_result, indent=2)
+                    summary_prompt = f"User asked: {query}\n\nHere is the data from IBKR:\n{tool_result_str}\n\nPlease provide a clear, formatted summary of this data for the user."
+                    summary_response = gemini_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, stream=False, enable_tools=False)
+                    summary_candidate = summary_response.get('candidates', [{}])[0]
+                    summary_parts = summary_candidate.get('content', {}).get('parts', [])
+                    summary_text = "".join(p.get('text', '') for p in summary_parts)
+
+                    return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+
+                elif preamble:
+                    return {"analysis": preamble}
+
+                return {"analysis": "No response from AI."}
+
+            else:
+                # Local / OpenAI path — query intent detection first
+                query_lower = query.lower()
+                direct_tool = None
+                if enable_trading:
+                    if any(kw in query_lower for kw in ['position', 'holding', 'portfolio', 'what do i own', 'what do i hold', 'my stock']):
+                        direct_tool = 'get_positions'
+                    elif any(kw in query_lower for kw in ['order', 'pending', 'open order', 'my order']):
+                        direct_tool = 'get_orders'
+                    elif any(kw in query_lower for kw in ['account', 'balance', 'buying power', 'margin', 'equity', 'net liquid']):
+                        direct_tool = 'get_account_summary'
+
+                if direct_tool:
+                    log_to_file(f"[Local LLM MCP] Query intent → {direct_tool}")
+                    tool_result = execute_tool_call(direct_tool, {})
+                    if tool_result.get('error'):
+                        return {"analysis": f"IBKR Error: {tool_result['error']}"}
+                    tool_result_str = json.dumps(tool_result, indent=2)
+                    summary_prompt = f"User asked: {query}\n\nHere is the real-time data from Interactive Brokers:\n{tool_result_str}\n\nProvide a clear, formatted summary. Only use the data above — do NOT make up any numbers."
+                    try:
+                        summary_msg = openai_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, base_url)
+                        summary_text = summary_msg.get('content', '') if isinstance(summary_msg, dict) else str(summary_msg)
+                        return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                    except Exception:
+                        return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+
+                tools = IBKR_TOOLS_OPENAI if enable_trading else None
+                message = openai_call(prompt, api_key, model_name, temp, enhanced_system_prompt, base_url, tools=tools)
+                log_to_file(f"[Local LLM] Full response: {json.dumps(message, indent=2)}")
+
+                if isinstance(message, dict) and 'tool_calls' in message and message['tool_calls']:
+                    tool_call = message['tool_calls'][0]
+                    function = tool_call.get('function', {})
+                    tool_name = function.get('name')
+                    try:
+                        arguments = json.loads(function.get('arguments', '{}'))
+                    except:
+                        arguments = {}
+
+                    log_to_file(f"[Local LLM] Tool call: {tool_name}({arguments})")
+                    tool_result = execute_tool_call(tool_name, arguments)
+
+                    if tool_result.get('type') == 'pending_trade':
+                        return {"analysis": tool_result['message'], "pending_trade": tool_result}
+
+                    if tool_result.get('error'):
+                        return {"analysis": f"IBKR Error: {tool_result['error']}"}
+
+                    # Call LLM again to summarize the tool result
+                    tool_result_str = json.dumps(tool_result, indent=2)
+                    summary_prompt = f"User asked: {query}\n\nHere is the data from IBKR:\n{tool_result_str}\n\nPlease provide a clear, formatted summary of this data for the user."
+                    try:
+                        summary_msg = openai_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, base_url)
+                        summary_text = summary_msg.get('content', '') if isinstance(summary_msg, dict) else str(summary_msg)
+                        return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                    except Exception:
+                        return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+
+                # No formal tool_calls — check for text-based tool call
+                content = message.get('content', '') if isinstance(message, dict) else str(message)
+                if content:
+                    known_tools = ['get_positions', 'get_orders', 'get_account_summary']
+                    detected_tool = next((t for t in known_tools if t in content), None)
+                    if detected_tool:
+                        log_to_file(f"[Local LLM MCP] Detected text-based tool call: {detected_tool}")
+                        tool_result = execute_tool_call(detected_tool, {})
+                        if tool_result.get('error'):
+                            return {"analysis": f"IBKR Error: {tool_result['error']}"}
+                        tool_result_str = json.dumps(tool_result, indent=2)
+                        summary_prompt = f"User asked: {query}\n\nHere is the real-time data from IBKR:\n{tool_result_str}\n\nPlease provide a clear, formatted summary of this data for the user. Do NOT make up any data."
+                        try:
+                            summary_msg = openai_call(summary_prompt, api_key, model_name, temp, enhanced_system_prompt, base_url)
+                            summary_text = summary_msg.get('content', '') if isinstance(summary_msg, dict) else str(summary_msg)
+                            return {"analysis": summary_text if summary_text else f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+                        except Exception:
+                            return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```"}
+
+                return {"analysis": content if content else "No response from AI."}
+
+        except Exception as e:
+            log_to_file(f"[MCP Error] {str(e)}")
+            return {"analysis": f"Error: {str(e)}"}
 
 @app.route('/analyze', methods=['POST'])
 def analyze():

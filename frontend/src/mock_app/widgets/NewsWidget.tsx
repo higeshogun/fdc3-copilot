@@ -3,10 +3,8 @@ import { Clock, Filter } from 'lucide-react';
 import { useSimulationStore } from '../store/useSimulationStore';
 
 const MOCK_NEWS = [
-    { id: 1, time: '13:45', headline: 'Treasury yields spike following unexpected inflation data.', sentiment: 'negative', related: ['US10Y', 'US30Y', 'US2Y'] },
     { id: 2, time: '13:12', headline: 'GBP/USD touches 3-month high on BOE hawkishness.', sentiment: 'positive', related: ['GBP/USD', 'EUR/USD'] },
     { id: 3, time: '12:50', headline: 'NVDA earnings expectations reach fever pitch.', sentiment: 'neutral', related: ['NVDA', 'MSFT'] },
-    { id: 4, time: '11:05', headline: 'Fed Governor signals patience on rate cuts.', sentiment: 'negative', related: ['US10Y'] },
     { id: 5, time: '10:30', headline: 'Apple unveils new VR headset prototype.', sentiment: 'positive', related: ['AAPL'] },
     { id: 6, time: '10:15', headline: 'Microsoft Azure gains market share in cloud computing.', sentiment: 'positive', related: ['MSFT'] },
     { id: 7, time: '09:45', headline: 'Tesla production numbers beat estimates.', sentiment: 'positive', related: ['TSLA'] },

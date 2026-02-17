@@ -1,5 +1,6 @@
 
 import { create } from 'zustand';
+import { API_BASE_URL } from '../config';
 import { persist } from 'zustand/middleware';
 
 // Types
@@ -34,6 +35,12 @@ export interface Order {
     avgPx: number;
     cumQty: number;
     settleDate: string;
+    // Advanced order fields
+    auxPrice?: number; // Stop price for STOP_LIMIT, TRAILLMT
+    trailingAmt?: number; // Trailing amount for TRAIL, TRAILLMT
+    trailingType?: 'amt' | '%'; // Trailing type: amount or percentage
+    allOrNone?: boolean; // Execute entire order at once or allow partial fills
+    outsideRTH?: boolean; // Allow execution outside regular trading hours
 }
 
 export interface Trade {
@@ -73,6 +80,18 @@ export interface AiConfig {
     end: string;
 }
 
+export interface McpTrade {
+    id: string;
+    timestamp: number;
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    quantity: number;
+    orderType: string;
+    limitPrice?: number;
+    status: 'pending' | 'executed' | 'cancelled' | 'failed';
+    result?: unknown;
+}
+
 interface SimulationState {
     instruments: Record<string, Instrument>;
     positions: Record<string, Position>;
@@ -83,6 +102,12 @@ interface SimulationState {
     toasts: Toast[];
     aiConfig: AiConfig;
     theme: 'dark' | 'light';
+    ibkrSymbols: Set<string>; // Symbols receiving live IBKR data
+    mcpTrades: McpTrade[]; // Trades executed via MCP/IBKR
+    connectionStatus: {
+        marketData: boolean;
+        gateway: boolean;
+    };
 
     // Actions
     toggleTheme: () => void;
@@ -94,10 +119,23 @@ interface SimulationState {
     removeToast: (id: string) => void;
     updateAiConfig: (config: Partial<AiConfig>) => void;
     clearLogs: () => void;
-    broadcastSnapshot: () => void;
+    broadcastSnapshot: () => Promise<void>;
     selectTrade: (trade: Trade) => void;
     selectContact: (name: string) => void;
     flattenPosition: (symbol: string) => void;
+    updateInstrumentFromIBKR: (symbol: string, data: { last: number; bid: number | null; ask: number | null; chg?: number | null }) => void;
+    addMcpTrade: (trade: Omit<McpTrade, 'id' | 'timestamp'>) => void;
+    updateMcpTrade: (id: string, updates: Partial<McpTrade>) => void;
+    cancelOrder: (orderId: string) => Promise<void>;
+    modifyOrder: (orderId: string, updates: Record<string, unknown>) => Promise<void>;
+    fetchStatus: () => Promise<void>;
+    addInstrument: (symbol: string, assetClass?: string) => Promise<void>;
+    removeInstrument: (symbol: string) => void;
+    reorderInstruments: (newOrder: string[]) => void;
+
+    // MCP Mode
+    mcpMode: boolean;
+    toggleMcpMode: () => void;
 }
 
 // Helper: Ticker Precision
@@ -121,17 +159,23 @@ const initialInstruments: Record<string, Instrument> = {
     'TSLA': { symbol: 'TSLA', name: 'Tesla Inc.', last: 175.30, bid: 175.25, ask: 175.35, chg: -1.50, type: 'EQUITY' },
     'EUR/USD': { symbol: 'EUR/USD', name: 'Euro / US Dollar', last: 1.0850, bid: 1.0849, ask: 1.0851, chg: 0.18, type: 'FX' },
     'GBP/USD': { symbol: 'GBP/USD', name: 'British Pound', last: 1.2640, bid: 1.2639, ask: 1.2641, chg: 0.22, type: 'FX' },
-    'US10Y': { symbol: 'US10Y', name: 'US Treasury 10Y', last: 4.190, bid: 4.188, ask: 4.192, chg: 0.02, type: 'RATES' },
+    'USD/JPY': { symbol: 'USD/JPY', name: 'US Dollar / Japanese Yen', last: 154.50, bid: 154.48, ask: 154.52, chg: 0.15, type: 'FX' },
 };
 
-const initialPositions: Record<string, Position> = {
-    'AAPL': { symbol: 'AAPL', long: 15000, short: 0, cost: 180.50 },
-    'MSFT': { symbol: 'MSFT', long: 12000, short: 0, cost: 410.20 },
-    'EUR/USD': { symbol: 'EUR/USD', long: 1000000, short: 0, cost: 1.0820 },
+// Reference prices for calculating change percentage (simulates previous close)
+const referencePrices: Record<string, number> = {
+    'AAPL': 187.13,
+    'MSFT': 417.00,
+    'NVDA': 953.07,
+    'TSLA': 177.97,
+    'EUR/USD': 1.0830,
+    'GBP/USD': 1.2612,
+    'USD/JPY': 154.27,
 };
+
+const initialPositions: Record<string, Position> = {};
 
 let orderIdCounter = 1001;
-let execIdCounter = 5001;
 
 export const useSimulationStore = create<SimulationState>()(
     persist(
@@ -143,20 +187,31 @@ export const useSimulationStore = create<SimulationState>()(
             selectedSymbol: 'AAPL',
             fdc3Logs: [],
             toasts: [],
+            ibkrSymbols: new Set<string>(),
+            mcpTrades: [],
             aiConfig: {
                 provider: 'local',
-                url: 'http://localhost:8081',
+                url: 'https://myllm.kumatech.net',
                 key: '',
                 model: 'gemini-1.5-flash',
                 temp: 0.7,
-                prompt: "You are a trade assistant and analyst. Analyze the FDC3 logs for to help answers my questions about orders and trades and position and what i have been doing on the platform based on the context derived from the fd3 json data.",
+                prompt: "You are a senior trading desk AI assistant integrated into a live brokerage platform connected to Interactive Brokers (IBKR).\n\nYOUR CAPABILITIES:\n- Query real-time positions, orders, and account data via IBKR tools\n- Place, modify, and cancel orders (with user confirmation)\n- Analyze market activity, P&L, risk exposure, and portfolio composition\n- Interpret the FDC3 activity log showing recent user actions (symbol selections, order submissions, trades)\n\nCONTEXT YOU RECEIVE:\n- FDC3 logs: A chronological feed of user interactions — instrument selections, order events, and periodic portfolio.summary snapshots (symbol, qty, avgCost). These reflect UI activity, not necessarily current holdings.\n- When IBKR tools are available, ALWAYS call them for live data. Never guess positions, orders, or balances.\n\nRESPONSE STYLE:\n- Be concise, data-driven, and professional. Lead with the answer, then provide context.\n- Use tables or bullet points for multi-row data (positions, orders).\n- Include relevant numbers (P&L, quantities, prices) — avoid vague summaries.\n- When suggesting trades, state the rationale and risk clearly.\n- If data is unavailable or a tool call fails, say so explicitly rather than fabricating data.",
                 start: '',
                 end: ''
             },
             theme: 'dark',
+            connectionStatus: {
+                marketData: false,
+                gateway: false
+            },
+            mcpMode: false,
 
             toggleTheme: () => set(state => ({
                 theme: state.theme === 'dark' ? 'light' : 'dark'
+            })),
+
+            toggleMcpMode: () => set(state => ({
+                mcpMode: !state.mcpMode
             })),
 
             addLog: (log) => set(state => ({
@@ -188,10 +243,28 @@ export const useSimulationStore = create<SimulationState>()(
                 }
             },
 
-            submitOrder: (orderValues) => {
+            submitOrder: async (orderValues) => {
+                const { side, symbol, qty, type, price } = orderValues;
+                console.log("[App] Submitting Order:", orderValues);
+
+                // Validation
+                if (type === 'LIMIT' && (!price || isNaN(price))) {
+                    get().addToast(`❌ Invalid Price: ${price}`, 'error');
+                    return;
+                }
+                if (!qty || isNaN(qty) || qty <= 0) {
+                    get().addToast(`❌ Invalid Quantity: ${qty}`, 'error');
+                    return;
+                }
+
+                // Removed blocking window.confirm for now to debug "nothing happens" issue
+                // const confirmed = window.confirm(...);
+                // if (!confirmed) return;
+
                 const id = `ORD-${orderIdCounter++}`;
                 const time = new Date().toLocaleTimeString();
-                const settleDate = calculateSettlement();
+
+                // Optimistically add to local store for immediate feedback (marked as PENDING)
                 const newOrder: Order = {
                     ...orderValues,
                     id,
@@ -199,74 +272,106 @@ export const useSimulationStore = create<SimulationState>()(
                     status: 'NEW',
                     avgPx: 0,
                     cumQty: 0,
-                    settleDate
+                    settleDate: calculateSettlement()
                 };
-
                 set(state => ({ orders: [newOrder, ...state.orders] }));
-                get().addToast(`ORDER SUBMITTED: ${orderValues.side} ${orderValues.qty} ${orderValues.symbol}`, 'info');
-                get().addLog({ origin: 'APP', type: 'fdc3.order', data: newOrder });
 
-                // Simulate Execution
-                setTimeout(() => {
-                    const { orders, positions } = get();
-                    const orderIndex = orders.findIndex(o => o.id === id);
-                    if (orderIndex === -1) return;
+                try {
+                    get().addToast(`Submitting IBKR Order...`, 'info');
 
-                    const order = { ...orders[orderIndex] };
-                    const fillQty = order.qty;
-                    const fillPx = order.price + (Math.random() - 0.5) * 0.05;
-                    const execId = `EX-${execIdCounter++}`;
+                    const response = await fetch(`${API_BASE_URL}/mcp/place_order`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            symbol,
+                            side,
+                            quantity: qty,
+                            type: type,
+                            price: price || 0, // Ensure not null/NaN if market
+                            auxPrice: orderValues.auxPrice,
+                            trailingAmt: orderValues.trailingAmt,
+                            trailingType: orderValues.trailingType,
+                            allOrNone: orderValues.allOrNone,
+                            outsideRTH: orderValues.outsideRTH
+                        })
+                    });
 
-                    const trade: Trade = {
-                        execId,
-                        orderId: order.id,
-                        time: new Date().toLocaleTimeString(),
-                        side: order.side,
-                        symbol: order.symbol,
-                        qty: fillQty,
-                        price: fillPx,
-                        cpty: ['GS', 'MS', 'JPM', 'CITI', 'BARC'][Math.floor(Math.random() * 5)],
-                        settleDate
-                    };
+                    const result = await response.json();
+                    console.log("[App] Backend Response:", result);
 
-                    // Update Order
-                    order.status = 'FILLED';
-                    order.cumQty = fillQty;
-                    order.avgPx = fillPx;
+                    if (response.ok && !result.error) {
+                        get().addToast(`✅ IBKR Order Placed: ${result.order_id || 'Submitted'}`, 'success');
 
-                    // Update Position
-                    const pos = positions[order.symbol] || { symbol: order.symbol, long: 0, short: 0, cost: 0 };
-                    const newPos = { ...pos };
+                        // Log the order submission event (user action, not data dump)
+                        get().addLog({
+                            origin: 'APP',
+                            type: 'order.submitted',
+                            data: {
+                                orderId: result.order_id,
+                                symbol,
+                                side,
+                                qty,
+                                type,
+                                price: type === 'LIMIT' ? price : 'MKT'
+                            }
+                        });
 
-                    if (order.side === 'BUY') {
-                        newPos.long += fillQty;
-                        newPos.cost = ((pos.long * pos.cost) + (fillQty * fillPx)) / (newPos.long || 1);
+                        // Refresh snapshot for FDC3 broadcast (without logging)
+                        await get().broadcastSnapshot();
                     } else {
-                        if (newPos.long > 0) newPos.long -= fillQty;
-                        else newPos.short += fillQty;
-                        newPos.cost = ((pos.short * pos.cost) + (fillQty * fillPx)) / (newPos.short || 1);
+                        throw new Error(result.error || 'Unknown error');
                     }
-
+                } catch (err) {
+                    console.error("IBKR Order Placement Failed", err);
+                    get().addToast(`❌ Order Failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+                    // Mark as cancelled in local store
                     set(state => ({
-                        orders: state.orders.map(o => o.id === id ? order : o),
-                        trades: [trade, ...state.trades],
-                        positions: { ...state.positions, [order.symbol]: newPos }
+                        orders: state.orders.map(o => o.id === id ? { ...o, status: 'CANCELLED' } : o)
                     }));
+                }
+            },
 
-                    get().addToast(`ORDER FILLED: ${order.side} ${fillQty} ${order.symbol} @ ${fillPx.toFixed(getTickerPrecision(order.symbol))}`, 'success');
-                    get().addLog({ origin: 'FDC3', type: 'fdc3.trade', data: trade });
+            cancelOrder: async (orderId) => {
+                try {
+                    get().addToast(`Cancelling Order ${orderId}...`, 'info');
+                    const response = await fetch(`${API_BASE_URL}/mcp/cancel_order`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ order_id: orderId })
+                    });
+                    const result = await response.json();
+                    if (response.ok && !result.error) {
+                        get().addToast(`✅ Order Cancellation Submitted: ${orderId}`, 'success');
+                    } else {
+                        throw new Error(result.error || 'Unknown error');
+                    }
+                } catch (err) {
+                    console.error("Cancel Failed", err);
+                    get().addToast(`❌ Cancel Failed: ${err}`, 'error');
+                }
+            },
 
-                    // Republish Position Update
-                    const updatedPositions = get().positions;
-                    const positionContext = {
-                        type: 'fdc3.position',
-                        instrument: { type: 'fdc3.instrument', id: { ticker: order.symbol } },
-                        holding: updatedPositions[order.symbol].long - updatedPositions[order.symbol].short
-                    };
-                    if (window.fdc3) window.fdc3.broadcast(positionContext);
-                    get().addLog({ origin: 'FDC3', type: 'fdc3.position', data: positionContext });
-
-                }, 1000);
+            modifyOrder: async (orderId, updates) => {
+                try {
+                    get().addToast(`Modifying Order ${orderId}...`, 'info');
+                    const response = await fetch(`${API_BASE_URL}/mcp/modify_order`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            order_id: orderId,
+                            ...updates
+                        })
+                    });
+                    const result = await response.json();
+                    if (response.ok && !result.error) {
+                        get().addToast(`✅ Order Modification Submitted: ${orderId}`, 'success');
+                    } else {
+                        throw new Error(result.error || 'Unknown error');
+                    }
+                } catch (err) {
+                    console.error("Modify Failed", err);
+                    get().addToast(`❌ Modify Failed: ${err}`, 'error');
+                }
             },
 
             simulateMarketData: () => {
@@ -274,6 +379,10 @@ export const useSimulationStore = create<SimulationState>()(
                     const newInstruments = { ...state.instruments };
                     let changed = false;
                     Object.keys(newInstruments).forEach(key => {
+                        // Skip symbols that have live IBKR data (only simulate non-IBKR symbols)
+                        if (state.ibkrSymbols.has(key)) {
+                            return;
+                        }
                         if (Math.random() > 0.4) {
                             const inst = { ...newInstruments[key] };
                             const volatility = inst.type === 'FX' ? 0.0002 : 0.0005;
@@ -294,15 +403,34 @@ export const useSimulationStore = create<SimulationState>()(
                 });
             },
 
-            broadcastSnapshot: () => {
-                const { instruments, positions, orders, selectedSymbol } = get();
+            broadcastSnapshot: async () => {
+                const { instruments, selectedSymbol } = get();
                 const fdc3Available = !!window.fdc3;
 
-                if (!fdc3Available) {
-                    console.warn("FDC3 Snapshot: Desktop Agent not available. Logging locally only.");
-                }
+                console.log("FDC3 Snapshot: Fetching remote state...");
 
-                console.log("FDC3 Snapshot: Processing system state...");
+                // Fetch real state from backend to ensure snapshot is accurate
+                let mergedPositions: Array<{ contractDesc?: string; symbol?: string; position?: number; avgCost?: number; isSimulated?: boolean }> = [];
+                let mergedOrders: Array<{ orderId?: string; id?: string; symbol?: string; ticker?: string; side?: string; totalSize?: number; totalQuantity?: number; qty?: number; status?: string; order_ccp_status?: string; isSimulated?: boolean }> = [];
+
+                try {
+                    const [pRes, oRes] = await Promise.all([
+                        fetch(`${API_BASE_URL}/mcp/positions`),
+                        fetch(`${API_BASE_URL}/mcp/orders`)
+                    ]);
+
+                    if (pRes.ok) {
+                        const pData = await pRes.json();
+                        mergedPositions = Array.isArray(pData) ? pData : (pData.positions || []);
+                    }
+
+                    if (oRes.ok) {
+                        const oData = await oRes.json();
+                        mergedOrders = Array.isArray(oData) ? oData : (oData.orders || []);
+                    }
+                } catch (e) {
+                    console.error("FDC3 Snapshot: Failed to fetch state", e);
+                }
 
                 // 1. Snapshot Watchlist
                 const instrumentList = {
@@ -314,37 +442,67 @@ export const useSimulationStore = create<SimulationState>()(
                     }))
                 };
                 if (fdc3Available) window.fdc3.broadcast(instrumentList);
-                get().addLog({ origin: 'FDC3', type: 'fdc3.instrumentList', data: instrumentList });
+                // REMOVED: Don't log massive watchlist snapshots
 
-                // 2. Snapshot Portfolio
+                // 2. Snapshot Portfolio (Using fetched merged data)
                 const portfolio = {
                     type: 'fdc3.portfolio',
-                    name: 'Simulation Portfolio',
-                    positions: Object.keys(positions).map(sym => ({
+                    name: 'Combined IBKR & Simulated Portfolio',
+                    positions: mergedPositions.map(p => ({
                         type: 'fdc3.position',
-                        instrument: { type: 'fdc3.instrument', id: { ticker: sym } },
-                        holding: positions[sym].long - positions[sym].short
+                        instrument: { type: 'fdc3.instrument', id: { ticker: p.contractDesc || p.symbol || 'UNK' } },
+                        holding: p.position || 0,
+                        avgCost: p.avgCost || 0,
+                        isSimulated: p.isSimulated || false
                     }))
                 };
                 if (fdc3Available) window.fdc3.broadcast(portfolio);
-                get().addLog({ origin: 'FDC3', type: 'fdc3.portfolio', data: portfolio });
+                // REMOVED: Don't log massive portfolio snapshots
 
                 // 3. Snapshot Orders
-                if (orders.length > 0) {
+                if (mergedOrders.length > 0) {
                     const orderCollection = {
                         type: 'fdc3.collection',
                         name: 'Recent Orders',
-                        members: orders.slice(0, 10).map(o => ({
+                        members: mergedOrders.slice(0, 15).map(o => ({
                             type: 'fdc3.order',
-                            id: { orderId: o.id },
-                            details: { symbol: o.symbol, side: o.side, qty: o.qty, price: o.price, status: o.status }
+                            id: { orderId: o.orderId || o.id },
+                            details: {
+                                symbol: o.symbol || o.ticker || 'UNK',
+                                side: o.side,
+                                qty: o.totalSize || o.totalQuantity || o.qty,
+                                status: o.status || o.order_ccp_status,
+                                isSimulated: o.isSimulated || false
+                            }
                         }))
                     };
                     if (fdc3Available) window.fdc3.broadcast(orderCollection);
-                    get().addLog({ origin: 'FDC3', type: 'fdc3.collection', data: orderCollection });
+                    // REMOVED: Don't log massive order collection snapshots
                 }
 
-                // 4. Snapshot Selected Instrument
+                // 4. Compact portfolio summary for AI context (not full payload)
+                if (mergedPositions.length > 0 || mergedOrders.length > 0) {
+                    const summary: Record<string, unknown> = { type: 'portfolio.summary' };
+                    if (mergedPositions.length > 0) {
+                        summary.positions = mergedPositions.map(p => ({
+                            sym: p.contractDesc || p.symbol || 'UNK',
+                            qty: p.position || 0,
+                            avg: p.avgCost ? Math.round(p.avgCost * 100) / 100 : 0
+                        }));
+                    }
+                    if (mergedOrders.length > 0) {
+                        summary.orders = mergedOrders.slice(0, 10).map(o => ({
+                            id: o.orderId || o.id,
+                            sym: o.symbol || o.ticker || 'UNK',
+                            side: o.side,
+                            qty: o.totalSize || o.totalQuantity || o.qty,
+                            st: o.status || o.order_ccp_status
+                        }));
+                    }
+                    get().addLog({ origin: 'APP', type: 'portfolio.summary', data: summary });
+                }
+
+                // 5. Snapshot Selected Instrument - Keep this for context continuity
                 if (selectedSymbol) {
                     const instrument = {
                         type: 'fdc3.instrument',
@@ -352,7 +510,7 @@ export const useSimulationStore = create<SimulationState>()(
                         name: selectedSymbol
                     };
                     if (fdc3Available) window.fdc3.broadcast(instrument);
-                    get().addLog({ origin: 'FDC3', type: 'fdc3.instrument', data: instrument });
+                    // REMOVED: Already logged by selectSymbol action
                 }
             },
 
@@ -395,27 +553,194 @@ export const useSimulationStore = create<SimulationState>()(
                 }
             },
 
-            flattenPosition: (symbol: string) => {
-                const { positions, instruments, submitOrder } = get();
-                const pos = positions[symbol];
-                if (!pos) return;
+            flattenPosition: async (symbol: string) => {
+                try {
+                    // Fetch current IBKR positions
+                    const res = await fetch(`${API_BASE_URL}/mcp/positions`);
+                    const data = await res.json();
 
-                const netQty = pos.long - pos.short;
-                if (netQty === 0) return;
+                    let positionsList: any[] = [];
+                    if (Array.isArray(data)) {
+                        positionsList = data;
+                    } else if (data && Array.isArray(data.positions)) {
+                        positionsList = data.positions;
+                    }
 
-                const side = netQty > 0 ? 'SELL' : 'BUY';
-                const qty = Math.abs(netQty);
-                const price = instruments[symbol]?.last || pos.cost;
+                    // Find the position for this symbol
+                    const position = positionsList.find((p: any) =>
+                        (p.contractDesc || p.symbol) === symbol
+                    );
 
-                get().addToast(`FLATTENING ${symbol}: Submitting ${side} ${qty}...`, 'warning');
+                    if (!position) {
+                        get().addToast(`No position found for ${symbol}`, 'error');
+                        return;
+                    }
 
-                submitOrder({
+                    const netQty = position.position || position.qty || 0;
+                    if (netQty === 0) {
+                        get().addToast(`No open position for ${symbol}`, 'info');
+                        return;
+                    }
+
+                    const side = netQty > 0 ? 'SELL' : 'BUY';
+                    const qty = Math.abs(netQty);
+                    const { instruments } = get();
+                    const price = instruments[symbol]?.last || position.avgCost || 0;
+
+                    get().addToast(`Closing ${symbol}: ${side} ${qty} @ MKT`, 'warning');
+
+                    get().submitOrder({
+                        symbol,
+                        side,
+                        qty,
+                        type: 'MARKET',
+                        price,
+                        expiry: 'DAY'
+                    });
+                } catch (err) {
+                    console.error('Failed to flatten position:', err);
+                    get().addToast(`Failed to close ${symbol}: ${err}`, 'error');
+                }
+            },
+
+            updateInstrumentFromIBKR: (symbol: string, data: { last: number; bid: number | null; ask: number | null; chg?: number | null }) => {
+                set(state => {
+                    const inst = state.instruments[symbol];
+                    // Update EQUITY and FX type instruments (skip RATES for now)
+                    if (!inst || inst.type === 'RATES') {
+                        return {};
+                    }
+
+                    const updatedInst = { ...inst };
+                    updatedInst.last = data.last;
+
+                    // Only update bid/ask if provided (delayed data may not have them)
+                    if (data.bid !== null) {
+                        updatedInst.bid = data.bid;
+                    }
+                    if (data.ask !== null) {
+                        updatedInst.ask = data.ask;
+                    }
+
+                    // Use IBKR provided change or calculate vs reference price
+                    if (data.chg !== undefined && data.chg !== null) {
+                        updatedInst.chg = data.chg;
+                    } else {
+                        const refPrice = referencePrices[symbol];
+                        if (refPrice) {
+                            updatedInst.chg = parseFloat((((data.last - refPrice) / refPrice) * 100).toFixed(2));
+                        }
+                    }
+
+                    // Add symbol to IBKR set
+                    const newIbkrSymbols = new Set(state.ibkrSymbols);
+                    newIbkrSymbols.add(symbol);
+
+                    return {
+                        instruments: { ...state.instruments, [symbol]: updatedInst },
+                        ibkrSymbols: newIbkrSymbols
+                    };
+                });
+            },
+
+            addMcpTrade: (trade) => {
+                const id = `MCP-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+                set(state => ({
+                    mcpTrades: [{
+                        ...trade,
+                        id,
+                        timestamp: Date.now()
+                    }, ...state.mcpTrades].slice(0, 100) // Keep last 100 MCP trades
+                }));
+            },
+
+            updateMcpTrade: (id, updates) => {
+                set(state => ({
+                    mcpTrades: state.mcpTrades.map(t =>
+                        t.id === id ? { ...t, ...updates } : t
+                    )
+                }));
+            },
+
+            fetchStatus: async () => {
+                try {
+                    const resp = await fetch(`${API_BASE_URL}/all_status`);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        set({
+                            connectionStatus: {
+                                marketData: data.marketData.connected,
+                                gateway: data.gateway.available
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch connection status", e);
+                    set({
+                        connectionStatus: {
+                            marketData: false,
+                            gateway: false
+                        }
+                    });
+                }
+            },
+
+            addInstrument: async (symbol: string, assetClass: string = 'STK') => {
+                // Don't add if already exists
+                if (get().instruments[symbol]) {
+                    return;
+                }
+
+                const newInstrument: Instrument = {
                     symbol,
-                    side,
-                    qty,
-                    type: 'MARKET',
-                    price,
-                    expiry: 'DAY'
+                    name: symbol,
+                    type: assetClass === 'CASH' ? 'FX' : 'EQUITY',
+                    last: 0,
+                    bid: 0,
+                    ask: 0,
+                    chg: 0
+                };
+
+                set(state => ({
+                    instruments: {
+                        ...state.instruments,
+                        [symbol]: newInstrument
+                    }
+                }));
+
+                // Subscribe to market data
+                try {
+                    await fetch(`${API_BASE_URL}/mcp/subscribe`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ symbol })
+                    });
+                    console.log(`Subscribed to market data for ${symbol}`);
+                } catch (err) {
+                    console.error(`Failed to subscribe to ${symbol}:`, err);
+                }
+            },
+
+            removeInstrument: (symbol: string) => {
+                set(state => {
+                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                    const { [symbol]: _removed, ...remainingInstruments } = state.instruments;
+                    return {
+                        instruments: remainingInstruments,
+                        selectedSymbol: state.selectedSymbol === symbol ? '' : state.selectedSymbol
+                    };
+                });
+            },
+
+            reorderInstruments: (newOrder: string[]) => {
+                set(state => {
+                    const reordered: Record<string, Instrument> = {};
+                    newOrder.forEach(symbol => {
+                        if (state.instruments[symbol]) {
+                            reordered[symbol] = state.instruments[symbol];
+                        }
+                    });
+                    return { instruments: reordered };
                 });
             }
         }), {

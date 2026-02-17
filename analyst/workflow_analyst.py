@@ -177,13 +177,17 @@ def analyze():
                 except Exception as e:
                     sys.stderr.write(f"WARN: Could not read knowledge file {f}: {e}\n")
         
-        system_base = args.prompt if args.prompt else "Analyze these FDC3 logs:"
+        system_base = args.prompt if args.prompt else "Analyze these FDC3 logs to provide a summary of trader activity, portfolio state, and order execution."
         
-        # Combine Knowledge + System Prompt
+        # Combined Knowledge + System Prompt
+        simulation_logic = "\n\nCRITICAL CONTEXT:\n1. HYBRID EXECUTION: Stocks (AAPL, MSFT, etc.) are routed live to IBKR Gateway. FX pairs (USD/JPY, EUR/USD, etc.) are handled via a local Simulation Service for immediate execution to bypass broker restrictions.\n2. SIMULATION FLAG: Look for 'isSimulated: true' in positions or orders. These are simulated FX trades that reflect in the user's combined portfolio.\n3. PORTFOLIO LOGIC: The 'fdc3.portfolio' snapshot represents the merged state of both live IBKR holdings and simulated FX contracts."
+        
+        rule_set = "\n\nCRITICAL ANALYSIS RULES:\n1. Prioritize the LATEST information based on timestamp order.\n2. Individual `fdc3.position` updates appearing AFTER a `fdc3.portfolio` snapshot MUST override the portfolio's data for that instrument.\n3. The logs are chronological (Oldest to Newest). The last entry is the current state."
+        
         if knowledge_base:
-            system_instruction = f"REFERENCE KNOWLEDGE:\n{knowledge_base}\n\nINSTRUCTIONS:\n{system_base}\n\nCRITICAL ANALYSIS RULES:\n1. Prioritize the LATEST information based on timestamp order.\n2. Individual `fdc3.position` updates appearing AFTER a `fdc3.portfolio` snapshot MUST override the portfolio's data for that instrument.\n3. The logs are chronological (Oldest to Newest). The last entry is the current state."
+            system_instruction = f"REFERENCE KNOWLEDGE:\n{knowledge_base}\n\nINSTRUCTIONS:\n{system_base}{simulation_logic}{rule_set}"
         else:
-            system_instruction = f"{system_base}\n\nCRITICAL ANALYSIS RULES:\n1. Prioritize the LATEST information based on timestamp order.\n2. Individual `fdc3.position` updates appearing AFTER a `fdc3.portfolio` snapshot MUST override the portfolio's data for that instrument.\n3. The logs are chronological (Oldest to Newest). The last entry is the current state."
+            system_instruction = f"{system_base}{simulation_logic}{rule_set}"
 
         prompt = f"{system_instruction}\n\nLOGS:\n{context}\n\nAt the end of your response, provide exactly 3 brief suggested follow-up questions for the user to ask next. Prefix this section with 'Suggested Actions:' and use a bulleted list."
         

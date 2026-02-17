@@ -34,8 +34,8 @@ const ChartWidget = () => {
                     {isPositive ? '+' : ''}{((data[data.length - 1]?.value - data[0]?.value) / data[0]?.value * 100).toFixed(2)}%
                 </span>
             </div>
-            <div className="flex-grow min-h-0">
-                <ResponsiveContainer width="100%" height="100%">
+            <div className="flex-grow min-h-[100px] w-full min-w-[100px] relative">
+                <ResponsiveContainer width="100%" height="100%" minHeight={100} minWidth={100}>
                     <AreaChart data={data}>
                         <defs>
                             <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">

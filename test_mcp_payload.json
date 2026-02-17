@@ -1,0 +1,14 @@
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+        "name": "ask_analyst",
+        "arguments": {
+            "query": "Hello",
+            "logs": [],
+            "config": {},
+            "enable_trading": false
+        }
+    }
+}

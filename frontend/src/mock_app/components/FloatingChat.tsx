@@ -1,19 +1,37 @@
 
 import { useState, useEffect, useRef } from 'react';
-import { MessageSquare, X, Sparkles, Minus, Settings, ChevronDown, ChevronRight, Trash2, Globe, Zap } from 'lucide-react';
+import { MessageSquare, X, Sparkles, Minus, Settings, ChevronDown, ChevronRight, Trash2, Globe, Zap, AlertTriangle, Check, XCircle } from 'lucide-react';
 import { useSimulationStore } from '../store/useSimulationStore';
+import { API_BASE_URL } from '../config';
+
+interface PendingTrade {
+    token: string;
+    proposal: {
+        symbol: string;
+        side: 'BUY' | 'SELL';
+        quantity: number;
+        order_type: string;
+        limit_price?: number;
+    };
+    message: string;
+}
+
+import { mcpClient } from '../services/MCPClient';
 
 const FloatingChat = () => {
-    const { fdc3Logs, aiConfig, updateAiConfig, clearLogs } = useSimulationStore();
-    const BACKEND_URL = 'http://localhost:5500';
+    const { fdc3Logs, aiConfig, updateAiConfig, clearLogs, addToast, broadcastSnapshot, connectionStatus, mcpMode } = useSimulationStore();
+    const BACKEND_URL = API_BASE_URL;
     const [isOpen, setIsOpen] = useState(false);
     const [isMinimized, setIsMinimized] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [query, setQuery] = useState('');
-    const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant', content: string }[]>([]);
+    const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant', content: string, timestamp: number, mode?: 'native' | 'mcp' }[]>([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
     const [models, setModels] = useState<string[]>([]);
+    const [pendingTrade, setPendingTrade] = useState<PendingTrade | null>(null);
+    const [isConfirming, setIsConfirming] = useState(false);
+    const mcpStatus = { available: connectionStatus.gateway, checked: true };
     const logEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -24,20 +42,42 @@ const FloatingChat = () => {
 
     const [isTesting, setIsTesting] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean, message: string } | null>(null);
+    const [activeTab, setActiveTab] = useState<'chat' | 'logs'>('chat');
 
     const handleSend = async (customQuery?: string) => {
         const text = customQuery || query;
         if (!text.trim()) return;
 
-        setChatHistory(prev => [...prev, { role: 'user', content: text }]);
+        const timestamp = Date.now();
+        const userMsg = { role: 'user' as const, content: text, timestamp };
+
+        let placeholderText = '...';
+        if (mcpMode) {
+            placeholderText = "Analyst is thinking... (MCP Mode)";
+            if (aiConfig.provider === 'local') {
+                placeholderText += "\n\n💡 Hint: Local LLMs may be slow in MCP Mode as it waits for the full response. Disable MCP (Lightning Bolt) to enable streaming.";
+            }
+        }
+
+        const currentMode = mcpMode ? 'mcp' as const : 'native' as const;
+        const assistantPlaceholder = { role: 'assistant' as const, content: placeholderText, timestamp: timestamp + 1, mode: currentMode };
+
+        // Capture index before adding - it will be at the very end
+        const assistantMessageIdx = chatHistory.length + 1;
+
+        setChatHistory(prev => [...prev, userMsg, assistantPlaceholder]);
         if (!customQuery) setQuery('');
         setIsAnalyzing(true);
 
-        const assistantMessageIdx = chatHistory.length + 1;
-        setChatHistory(prev => [...prev, { role: 'assistant', content: '...' }]);
-
         try {
-            let filteredLogs = [...fdc3Logs];
+            // Force a state refresh so the AI has the latest positions/orders in the logs
+            await broadcastSnapshot();
+
+            // Get the truly latest logs from state after broadcast finishes
+            const state = useSimulationStore.getState();
+            const latestLogs = state.fdc3Logs || [];
+
+            let filteredLogs = [...latestLogs];
             if (aiConfig.start) {
                 const startTs = new Date(aiConfig.start).getTime();
                 filteredLogs = filteredLogs.filter(l => l.timestamp >= startTs);
@@ -47,50 +87,129 @@ const FloatingChat = () => {
                 filteredLogs = filteredLogs.filter(l => l.timestamp <= endTs);
             }
 
-            const response = await fetch(`${BACKEND_URL}/analyze`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            if (mcpMode) {
+                console.log("[Chat] Using MCP Mode (ask_analyst)");
+                // MCP Mode: Use 'ask_analyst' tool
+                const args = {
                     logs: filteredLogs,
                     query: text,
                     config: aiConfig,
-                    stream: true
-                })
-            });
+                    enable_trading: mcpStatus.available
+                };
 
-            if (!response.body) throw new Error('No response body');
+                const result = await mcpClient.callTool('ask_analyst', args) as any;
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let fullText = '';
-            let buffer = '';
+                // Parse result
+                // MCP TextContent: { type: 'text', text: '...' }
+                const content = result?.content?.[0];
+                if (content && content.type === 'text') {
+                    try {
+                        const data = JSON.parse(content.text);
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+                        // Handle pending trade
+                        if (data.pending_trade) {
+                            setPendingTrade(data.pending_trade);
+                        }
 
-                buffer += decoder.decode(value, { stream: true });
-                const parts = buffer.split('\n\n');
-                buffer = parts.pop() || '';
+                        // Update chat
+                        const analysisText = data.analysis || "No analysis provided.";
+                        setChatHistory(prev => {
+                            const next = [...prev];
+                            if (next[assistantMessageIdx]) {
+                                next[assistantMessageIdx] = { ...next[assistantMessageIdx], content: analysisText };
+                            }
+                            return next;
+                        });
 
-                for (const part of parts) {
-                    const lines = part.split('\n');
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const raw = line.substring(6).trim();
-                                if (!raw) continue;
-                                const data = JSON.parse(raw);
-                                if (data.text) {
-                                    fullText += data.text;
-                                    setChatHistory(prev => {
-                                        const next = [...prev];
-                                        next[assistantMessageIdx] = { role: 'assistant', content: fullText };
-                                        return next;
-                                    });
+                    } catch (e) {
+                        console.error("Failed to parse MCP analysis result:", e);
+                        // Fallback: display raw text
+                        setChatHistory(prev => {
+                            const next = [...prev];
+                            if (next[assistantMessageIdx]) {
+                                next[assistantMessageIdx] = { ...next[assistantMessageIdx], content: content.text };
+                            }
+                            return next;
+                        });
+                    }
+                } else {
+                    throw new Error("Invalid MCP response format");
+                }
+
+            } else {
+                // Legacy Mode: REST via /analyze endpoint (Streaming)
+                const response = await fetch(`${BACKEND_URL}/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        logs: filteredLogs,
+                        query: text,
+                        config: aiConfig,
+                        stream: true,
+                        enable_trading: mcpStatus.available
+                    })
+                });
+
+                if (!response.body) throw new Error('No response body');
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop() || '';
+
+                    for (const part of parts) {
+                        const lines = part.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const raw = line.substring(6).trim();
+                                    if (!raw) continue;
+                                    const data = JSON.parse(raw);
+                                    // console.log("[Stream]", data);
+
+                                    // Handle pending trade proposal
+                                    if (data.pending_trade) {
+                                        setPendingTrade(data.pending_trade);
+                                    }
+
+                                    if (data.error) {
+                                        setChatHistory(prev => {
+                                            const next = [...prev];
+                                            const lastIdx = next.findIndex(m => m.timestamp === timestamp + 1);
+                                            if (lastIdx !== -1) {
+                                                next[lastIdx] = {
+                                                    ...next[lastIdx],
+                                                    content: next[lastIdx].content === '...' ? `❌ Error: ${data.error}` : `${next[lastIdx].content}\n\n❌ Error: ${data.error}`
+                                                };
+                                            }
+                                            return next;
+                                        });
+                                    }
+
+                                    if (data.text) {
+                                        fullText += data.text;
+                                        setChatHistory(prev => {
+                                            const next = [...prev];
+                                            // Update content but KEEP the original placeholder timestamp to prevent jumping
+                                            // Find the message with the assistant timestamp we created
+                                            const idx = next.findIndex(m => m.timestamp === timestamp + 1);
+                                            if (idx !== -1) {
+                                                next[idx] = { ...next[idx], content: fullText };
+                                            }
+                                            return next;
+                                        });
+                                    }
+                                } catch (e) {
+                                    console.warn("Error parsing stream chunk", e);
                                 }
-                            } catch (e) {
-                                console.warn("Error parsing stream chunk", e);
                             }
                         }
                     }
@@ -100,12 +219,78 @@ const FloatingChat = () => {
             console.error("AI Error:", err);
             setChatHistory(prev => {
                 const next = [...prev];
-                next[assistantMessageIdx] = { role: 'assistant', content: '❌ Error connecting to AI backend.' };
+                if (next[assistantMessageIdx]) {
+                    next[assistantMessageIdx] = { ...next[assistantMessageIdx], content: '❌ Error connecting to AI backend.' };
+                }
                 return next;
             });
         } finally {
             setIsAnalyzing(false);
         }
+    };
+
+    const handleConfirmTrade = async () => {
+        if (!pendingTrade) return;
+        setIsConfirming(true);
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/mcp/confirm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: pendingTrade.token })
+            });
+
+            const result = await response.json();
+
+            if (result.executed) {
+                const trade = pendingTrade.proposal;
+                addToast(`Order executed: ${trade.side} ${trade.quantity} ${trade.symbol}`, 'success');
+
+                // Refresh snapshot so AI/Logs are up to date
+                await broadcastSnapshot();
+
+                setChatHistory(prev => [...prev, {
+                    role: 'assistant',
+                    content: `✅ Order executed successfully!\n\n**${trade.side} ${trade.quantity} ${trade.symbol}** (${trade.order_type}${trade.limit_price ? ` @ $${trade.limit_price}` : ''})\n\nThe order has been submitted to Interactive Brokers.`,
+                    timestamp: Date.now()
+                }]);
+            } else {
+                addToast(`Order failed: ${result.error || 'Unknown error'}`, 'error');
+                setChatHistory(prev => [...prev, {
+                    role: 'assistant',
+                    content: `❌ Order failed: ${result.error || 'Unknown error'}`,
+                    timestamp: Date.now()
+                }]);
+            }
+        } catch (err) {
+            console.error("Confirm trade error:", err);
+            addToast('Failed to execute order', 'error');
+        } finally {
+            setIsConfirming(false);
+            setPendingTrade(null);
+        }
+    };
+
+    const handleCancelTrade = async () => {
+        if (!pendingTrade) return;
+
+        try {
+            await fetch(`${BACKEND_URL}/mcp/cancel-proposal`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: pendingTrade.token })
+            });
+        } catch {
+            // Ignore errors on cancel
+        }
+
+        setChatHistory(prev => [...prev, {
+            role: 'assistant',
+            content: '🚫 Trade cancelled by user.',
+            timestamp: Date.now()
+        }]);
+
+        setPendingTrade(null);
     };
 
     const fetchModels = async () => {
@@ -154,9 +339,15 @@ const FloatingChat = () => {
         const hasInstruments = fdc3Logs.some(l => l.type === 'fdc3.instrument');
 
         const suggestions = ["What happened recently?"];
+
+        // Add trading suggestions if MCP is available
+        if (mcpStatus.available) {
+            suggestions.push("What are my positions?");
+            suggestions.push("Show account summary");
+        }
+
         if (hasOrders) suggestions.push("Analyze my order execution");
         if (hasInstruments) suggestions.push("Summarize instrument activity");
-        suggestions.push("Check for compliance violations");
 
         return suggestions;
     };
@@ -187,6 +378,14 @@ const FloatingChat = () => {
                 <div className="flex items-center gap-2 text-[var(--text-primary)] font-semibold text-sm">
                     <Sparkles size={16} className="text-[var(--accent-color)]" />
                     AI ASSISTANT
+                    {mcpStatus.checked && (
+                        <span
+                            className={`ml-1 px-1.5 py-0.5 rounded text-[8px] font-bold ${mcpStatus.available ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}
+                            title={mcpStatus.available ? 'Connected to IBKR via MCP' : 'MCP not available - trading disabled'}
+                        >
+                            {mcpStatus.available ? 'IBKR' : 'DEMO'}
+                        </span>
+                    )}
                 </div>
                 <div className="flex items-center gap-3">
                     <button
@@ -200,6 +399,16 @@ const FloatingChat = () => {
                         title="Clear History"
                     >
                         <Trash2 size={16} />
+                    </button>
+                    <button
+                        onClick={async () => {
+                            addToast("Refreshing state snapshot...", "info");
+                            await broadcastSnapshot();
+                        }}
+                        className="text-[var(--text-secondary)] hover:text-[var(--accent-color)] transition-colors"
+                        title="Sync State Now"
+                    >
+                        <Zap size={16} />
                     </button>
                     <button onClick={() => setShowSettings(!showSettings)} className={`text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors ${showSettings ? 'text-[var(--accent-color)]' : ''}`}>
                         <Settings size={16} />
@@ -253,7 +462,7 @@ const FloatingChat = () => {
                                     <label className="block text-[10px] text-[var(--text-secondary)] mb-1">PROVIDER</label>
                                     <select
                                         value={aiConfig.provider}
-                                        onChange={(e) => updateAiConfig({ provider: e.target.value as any })}
+                                        onChange={(e) => updateAiConfig({ provider: e.target.value as 'gemini' | 'openai' | 'local' })}
                                         className="w-full bg-[var(--bg-secondary)] border border-[var(--border-primary)] rounded p-2 text-xs text-[var(--text-primary)]"
                                     >
                                         <option value="local">Local LLM (LM Studio / Ollama)</option>
@@ -376,80 +585,167 @@ const FloatingChat = () => {
                                 ))}
                             </div>
 
-                            {/* Chat & Logs */}
-                            <div className="flex-grow overflow-auto p-4 space-y-4 custom-scrollbar text-xs bg-[var(--bg-primary)]">
-                                <div className="flex justify-between items-center mb-2">
-                                    <span className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-widest">FDC3 Logs & Chat</span>
-                                </div>
+                            {/* Tabs */}
+                            <div className="flex border-b border-[var(--border-primary)] bg-[var(--bg-secondary)]">
+                                <button
+                                    className={`flex-1 py-2 text-xs font-bold text-center border-b-2 transition-colors ${activeTab === 'chat' ? 'border-[var(--accent-color)] text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+                                    onClick={() => setActiveTab('chat')}
+                                >
+                                    Chat
+                                </button>
+                                <button
+                                    className={`flex-1 py-2 text-xs font-bold text-center border-b-2 transition-colors ${activeTab === 'logs' ? 'border-[var(--accent-color)] text-[var(--text-primary)]' : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}`}
+                                    onClick={() => setActiveTab('logs')}
+                                >
+                                    System Logs ({fdc3Logs.length})
+                                </button>
+                            </div>
 
-                                {chatHistory.length === 0 && fdc3Logs.length === 0 && (
-                                    <div className="text-center py-10 text-[var(--text-tertiary)] italic">
-                                        No events captured yet. Click an instrument or submit an order to see context.
-                                    </div>
-                                )}
-
-                                {[
-                                    ...fdc3Logs.map(l => ({ ...l, isEvent: true as const })),
-                                    ...chatHistory.map((c, idx) => ({ ...c, isEvent: false as const, timestamp: Date.now() + idx }))
-                                ].sort((a, b) => a.timestamp - b.timestamp)
-                                    .map((item, i) => (
-                                        <div key={i} className={`flex ${item.isEvent ? 'justify-start' : (item as any).role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                            {item.isEvent ? (
-                                                <div className="w-full border-l-2 border-[var(--border-primary)] pl-3 py-1 space-y-1">
-                                                    <div className="flex items-center gap-2 text-[10px] text-[var(--text-secondary)] font-mono">
-                                                        <Globe size={10} />
-                                                        {item.origin}: {item.type}
-                                                    </div>
-                                                    <div
-                                                        onClick={() => toggleLog(item.timestamp)}
-                                                        className="cursor-pointer text-[var(--text-secondary)] hover:text-[var(--accent-hover)] transition-colors flex items-center gap-1"
-                                                    >
-                                                        {expandedLogs[item.timestamp] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                                        {expandedLogs[item.timestamp] ? 'Hide JSON' : 'Expand JSON'}
-                                                    </div>
-                                                    {expandedLogs[item.timestamp] && (
-                                                        <pre className="bg-[var(--bg-secondary)] p-2 rounded border border-[var(--border-primary)] text-[10px] text-[var(--accent-hover)] overflow-x-auto">
-                                                            {JSON.stringify(item.data, null, 2)}
-                                                        </pre>
-                                                    )}
+                            {activeTab === 'chat' ? (
+                                /* Chat View */
+                                <div className="flex-grow overflow-auto p-4 space-y-4 custom-scrollbar text-xs bg-[var(--bg-primary)]">
+                                    {chatHistory.length === 0 && (
+                                        <div className="text-center py-10 text-[var(--text-tertiary)] italic">
+                                            Ask the AI Analyst for help...
+                                        </div>
+                                    )}
+                                    {chatHistory.map((item, i) => (
+                                        <div key={i} className={`flex ${item.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                            <div className={`max-w-[85%] p-3 rounded-2xl flex flex-col gap-2 ${item.role === 'user' ? 'bg-[var(--accent-color)] text-white rounded-tr-none' : 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] rounded-tl-none border border-[var(--border-primary)]'}`}>
+                                                <div className="whitespace-pre-wrap">
+                                                    {item.content.split('Suggested Actions:')[0].trim()}
                                                 </div>
-                                            ) : (
-                                                <div className={`max-w-[85%] p-3 rounded-2xl flex flex-col gap-2 ${(item as any).role === 'user' ? 'bg-[var(--accent-color)] text-white rounded-tr-none' : 'bg-[var(--bg-tertiary)] text-[var(--text-primary)] rounded-tl-none border border-[var(--border-primary)]'}`}>
-                                                    <div className="whitespace-pre-wrap">
-                                                        {(item as any).content.split('Suggested Actions:')[0].trim()}
+                                                {item.role === 'assistant' && item.mode && (
+                                                    <div className={`mt-1 flex items-center gap-1 text-[9px] font-mono ${item.mode === 'mcp' ? 'text-purple-400' : 'text-cyan-400'}`}>
+                                                        <Zap size={8} />
+                                                        {item.mode === 'mcp' ? 'MCP Mode' : 'Native Mode'} · {aiConfig.provider}
                                                     </div>
-                                                    {(item as any).content.includes('Suggested Actions:') && (
-                                                        <div className="mt-2 pt-2 border-t border-[var(--border-primary)]/50 flex flex-col gap-1.5">
-                                                            <div className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Suggested Actions:</div>
-                                                            {(item as any).content.split('Suggested Actions:')[1]
-                                                                .split('\n')
-                                                                .map((s: string) => s.replace(/^[-*•]\s*/, '').trim())
-                                                                .filter((s: string) => s.length > 0)
-                                                                .map((s: string, idx: number) => (
-                                                                    <button
-                                                                        key={idx}
-                                                                        onClick={() => handleSend(s)}
-                                                                        className="text-left py-1.5 px-2 bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-md text-[var(--accent-color)] hover:bg-[var(--accent-color)] hover:text-white transition-colors text-[10px] font-semibold"
-                                                                    >
-                                                                        {s}
-                                                                    </button>
-                                                                ))
-                                                            }
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
+                                                )}
+                                                {item.content.includes('Suggested Actions:') && (
+                                                    <div className="mt-2 pt-2 border-t border-[var(--border-primary)]/50 flex flex-col gap-1.5">
+                                                        <div className="text-[10px] font-bold text-[var(--text-secondary)] uppercase tracking-wider">Suggested Actions:</div>
+                                                        {item.content.split('Suggested Actions:')[1]
+                                                            .split('\n')
+                                                            .map((s: string) => s.replace(/^[-*•]\s*/, '').trim())
+                                                            .filter((s: string) => s.length > 0)
+                                                            .map((s: string, idx: number) => (
+                                                                <button
+                                                                    key={idx}
+                                                                    onClick={() => handleSend(s)}
+                                                                    className="text-left py-1.5 px-2 bg-[var(--bg-primary)] border border-[var(--border-primary)] rounded-md text-[var(--accent-color)] hover:bg-[var(--accent-color)] hover:text-white transition-colors text-[10px] font-semibold"
+                                                                >
+                                                                    {s}
+                                                                </button>
+                                                            ))
+                                                        }
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     ))}
-                                {isAnalyzing && (
-                                    <div className="flex justify-start">
-                                        <div className="bg-[var(--bg-tertiary)] text-[var(--text-secondary)] p-2 rounded-2xl rounded-tl-none text-xs italic border border-[var(--border-primary)] animate-pulse">
-                                            Analyst is thinking...
+                                    {isAnalyzing && (
+                                        <div className="flex justify-start">
+                                            <div className="bg-[var(--bg-tertiary)] text-[var(--text-secondary)] p-2 rounded-2xl rounded-tl-none text-xs italic border border-[var(--border-primary)] animate-pulse">
+                                                Analyst is thinking...
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
-                                <div ref={logEndRef} />
-                            </div>
+                                    )}
+                                    {/* Trade Confirmation Card */}
+                                    {pendingTrade && (
+                                        <div className="bg-[var(--bg-tertiary)] border-2 border-yellow-500/50 rounded-xl p-4 space-y-3">
+                                            <div className="flex items-center gap-2 text-yellow-400">
+                                                <AlertTriangle size={16} />
+                                                <span className="font-bold text-xs uppercase">Trade Confirmation Required</span>
+                                            </div>
+
+                                            <div className="bg-[var(--bg-primary)] rounded-lg p-3 space-y-2">
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-[var(--text-secondary)] text-xs">Action</span>
+                                                    <span className={`font-bold text-sm ${pendingTrade.proposal.side === 'BUY' ? 'text-green-400' : 'text-red-400'}`}>
+                                                        {pendingTrade.proposal.side}
+                                                    </span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-[var(--text-secondary)] text-xs">Symbol</span>
+                                                    <span className="font-bold text-sm text-[var(--text-primary)]">{pendingTrade.proposal.symbol}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-[var(--text-secondary)] text-xs">Quantity</span>
+                                                    <span className="font-bold text-sm text-[var(--text-primary)]">{pendingTrade.proposal.quantity.toLocaleString()}</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-[var(--text-secondary)] text-xs">Order Type</span>
+                                                    <span className="font-bold text-sm text-[var(--text-primary)]">{pendingTrade.proposal.order_type}</span>
+                                                </div>
+                                                {pendingTrade.proposal.limit_price && (
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-[var(--text-secondary)] text-xs">Limit Price</span>
+                                                        <span className="font-bold text-sm text-[var(--text-primary)]">${pendingTrade.proposal.limit_price.toFixed(2)}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={handleConfirmTrade}
+                                                    disabled={isConfirming}
+                                                    className="flex-1 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-50 transition-colors"
+                                                >
+                                                    {isConfirming ? (
+                                                        'Executing...'
+                                                    ) : (
+                                                        <>
+                                                            <Check size={14} />
+                                                            Confirm
+                                                        </>
+                                                    )}
+                                                </button>
+                                                <button
+                                                    onClick={handleCancelTrade}
+                                                    disabled={isConfirming}
+                                                    className="flex-1 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/50 rounded-lg text-xs font-bold flex items-center justify-center gap-1 disabled:opacity-50 transition-colors"
+                                                >
+                                                    <XCircle size={14} />
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div ref={logEndRef} />
+                                </div>
+                            ) : (
+                                /* Logs View */
+                                <div className="flex-grow overflow-auto p-4 space-y-4 custom-scrollbar text-xs bg-[var(--bg-primary)]">
+                                    {fdc3Logs.length === 0 && (
+                                        <div className="text-center py-10 text-[var(--text-tertiary)] italic">
+                                            No system logs captured yet.
+                                        </div>
+                                    )}
+                                    {fdc3Logs.map((item, i) => (
+                                        <div key={i} className="flex justify-start">
+                                            <div className="w-full border-l-2 border-[var(--border-primary)] pl-3 py-1 space-y-1">
+                                                <div className="flex items-center gap-2 text-[10px] text-[var(--text-secondary)] font-mono">
+                                                    <Globe size={10} />
+                                                    {item.origin}: {item.type}
+                                                </div>
+                                                <div
+                                                    onClick={() => toggleLog(item.timestamp)}
+                                                    className="cursor-pointer text-[var(--text-secondary)] hover:text-[var(--accent-hover)] transition-colors flex items-center gap-1"
+                                                >
+                                                    {expandedLogs[item.timestamp] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                                    {expandedLogs[item.timestamp] ? 'Hide JSON' : 'Expand JSON'}
+                                                </div>
+                                                {expandedLogs[item.timestamp] && (
+                                                    <pre className="bg-[var(--bg-secondary)] p-2 rounded border border-[var(--border-primary)] text-[10px] text-[var(--accent-hover)] overflow-x-auto">
+                                                        {JSON.stringify(item.data, null, 2)}
+                                                    </pre>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div ref={logEndRef} />
+                                </div>
+                            )}
 
                             {/* Input */}
                             <div className="p-4 border-t border-[var(--border-primary)] bg-[var(--bg-secondary)]">

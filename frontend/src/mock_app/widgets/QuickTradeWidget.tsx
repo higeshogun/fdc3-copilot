@@ -9,6 +9,8 @@ const QuickTradeWidget = () => {
     const instrument = instruments[selectedSymbol];
     const [quantity, setQuantity] = useState(100);
     const [expiry, setExpiry] = useState<'DAY' | 'IOC' | 'GTC'>('DAY');
+    const [allOrNone, setAllOrNone] = useState(false);
+    const [outsideRTH, setOutsideRTH] = useState(false);
 
     const precision = getTickerPrecision(selectedSymbol);
 
@@ -41,7 +43,9 @@ const QuickTradeWidget = () => {
             qty: qty || quantity,
             type: 'LIMIT',
             price: price,
-            expiry
+            expiry,
+            allOrNone,
+            outsideRTH
         });
     };
 
@@ -118,6 +122,28 @@ const QuickTradeWidget = () => {
                         <option value="GTC">GTC</option>
                     </Select>
                 </div>
+            </div>
+
+            {/* Advanced Options */}
+            <div className="flex justify-center gap-3 mb-2">
+                <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={allOrNone}
+                        onChange={(e) => setAllOrNone(e.target.checked)}
+                        className="w-3 h-3"
+                    />
+                    <span className="text-[9px] uppercase text-[var(--text-primary)] font-semibold">All or None</span>
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={outsideRTH}
+                        onChange={(e) => setOutsideRTH(e.target.checked)}
+                        className="w-3 h-3"
+                    />
+                    <span className="text-[9px] uppercase text-[var(--text-primary)] font-semibold">Outside RTH</span>
+                </label>
             </div>
 
             {/* Depth Ladder */}

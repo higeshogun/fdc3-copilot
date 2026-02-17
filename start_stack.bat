@@ -4,9 +4,9 @@ echo --------------------------------------------------
 echo    Starting Interop AI Stack
 echo --------------------------------------------------
 
-:: 1. Start Mock OMS App (Port 5173)
-echo [1/2] Starting Mock OMS App (Port 5173)...
-start "Mock App" /min cmd /k "python mock_app/serve_mock.py"
+:: 1. Start Mock OMS App (Port 5500)
+echo [1/2] Starting Mock OMS App (Port 5500)...
+start "Mock App" /min cmd /k ".venv\Scripts\python.exe mock_app/serve_mock.py"
 
 :: 2. Run Lab Startup (GPU Checks / Analyst Layer)
 echo [2/2] Starting Analyst Backend...
@@ -17,7 +17,7 @@ echo Waiting for services to initialize...
 timeout /t 4 /nobreak > nul
 
 echo Opening Workstation...
-start http://localhost:5173
+start http://localhost:5500
 
 echo.
 echo ✅ Stack Launched!

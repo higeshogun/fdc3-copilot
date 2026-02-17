@@ -8,3 +8,7 @@ pandas
 matplotlib
 seaborn
 langchain-openai
+flask
+flask-cors
+requests
+websocket-client
