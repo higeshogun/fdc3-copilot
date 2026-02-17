@@ -22,13 +22,18 @@ npm run preview          # preview production build
 
 ```bash
 # 1. Create and activate virtual environment
+# Windows:
 python -m venv .venv
 .venv\Scripts\activate
+
+# macOS/Linux:
+# python3 -m venv .venv
+# source .venv/bin/activate
 
 # 2. Install dependencies (including flask, requests, etc.)
 pip install -r analyst/requirements.txt
 
-# 3. Run server (ensure venv python is used)
+# 3. Run server
 python mock_app/serve_mock.py
 ```
 

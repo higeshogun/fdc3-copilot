@@ -49,9 +49,10 @@ A sophisticated trading platform enhanced with AI-powered analysis, built to dem
 
 ### Prerequisites
 
-* **Python 3.10+** (Add to PATH during installation)
+* **Python 3.10+**
 * **Node.js 18+** (Required for frontend build)
-  * Windows: `winget install -e --id OpenJS.NodeJS.LTS`
+  * **Windows**: `winget install -e --id OpenJS.NodeJS.LTS`
+  * **macOS/Linux**: Use [nvm](https://github.com/nvm-sh/nvm) or your package manager
 * **Google Chrome** (or Edge/Brave)
 * **AI Provider** (Choose one):
   * **Local (Free)**: [LM Studio](https://lmstudio.ai/) or `llama-server` (port `8081`)
@@ -66,8 +67,14 @@ A sophisticated trading platform enhanced with AI-powered analysis, built to dem
     cd interop-ai-lab
     
     # 1. Setup Backend
+    # Windows:
     python -m venv .venv
     .venv\Scripts\activate
+    
+    # macOS/Linux:
+    # python3 -m venv .venv
+    # source .venv/bin/activate
+    
     pip install -r analyst/requirements.txt
     
     # 2. Build Frontend
