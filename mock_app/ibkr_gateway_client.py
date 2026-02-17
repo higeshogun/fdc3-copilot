@@ -129,45 +129,243 @@ class IBKRGatewayClient:
             return {"error": str(e), "authenticated": False}
 
     def list_tools(self) -> List[Dict[str, Any]]:
-        """List available IBKR operations as MCP-compatible tool definitions"""
+        """List available IBKR operations as MCP-compatible tool definitions with rich metadata."""
         return [
             {
+                "name": "get_accounts",
+                "description": "List all available Interactive Brokers trading accounts. Returns account IDs that can be passed to other tools. Call this first if you need to target a specific account.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                },
+                "annotations": {
+                    "title": "List Trading Accounts",
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": False
+                }
+            },
+            {
                 "name": "get_positions",
-                "description": "Get current portfolio positions",
-                "inputSchema": {"type": "object", "properties": {"account_id": {"type": "string"}}}
-            },
-            {
-                "name": "get_account_summary",
-                "description": "Get account summary with balance and buying power",
-                "inputSchema": {"type": "object", "properties": {"account_id": {"type": "string"}}}
-            },
-            {
-                "name": "get_orders",
-                "description": "Get list of current orders",
-                "inputSchema": {"type": "object", "properties": {}}
-            },
-            {
-                "name": "place_order",
-                "description": "Place a stock order",
+                "description": "Get current portfolio positions from Interactive Brokers. Returns all open positions including symbol, quantity, average cost, market value, unrealized P&L, and asset class. Use this to answer questions about holdings, portfolio composition, or profit/loss.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "symbol": {"type": "string"},
-                        "side": {"type": "string", "enum": ["BUY", "SELL"]},
-                        "quantity": {"type": "integer"},
-                        "order_type": {"type": "string", "enum": ["MKT", "LMT"]},
-                        "limit_price": {"type": "number"}
+                        "account_id": {
+                            "type": "string",
+                            "description": "Optional IBKR account ID. If omitted, uses the first available account."
+                        }
+                    },
+                    "required": []
+                },
+                "annotations": {
+                    "title": "Get Portfolio Positions",
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": False
+                }
+            },
+            {
+                "name": "get_account_summary",
+                "description": "Get account summary with balance, buying power, margin, net liquidation value, and equity from Interactive Brokers. Use this to answer questions about available funds, account value, or margin usage.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "account_id": {
+                            "type": "string",
+                            "description": "Optional IBKR account ID. If omitted, uses the first available account."
+                        }
+                    },
+                    "required": []
+                },
+                "annotations": {
+                    "title": "Get Account Summary",
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": False
+                }
+            },
+            {
+                "name": "get_orders",
+                "description": "Get list of current and recent orders from Interactive Brokers. Returns order ID, symbol, side, quantity, order type, status, and fill details. Use this to check order status, pending orders, or recent trade history.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                },
+                "annotations": {
+                    "title": "Get Orders",
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": False
+                }
+            },
+            {
+                "name": "search_contract",
+                "description": "Search for tradeable contracts/instruments by ticker symbol. Returns matching contracts with conid (contract ID), company name, asset class (STK, CASH, OPT, FUT), and exchange. Use this to look up instruments before placing orders or to find contract IDs.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {
+                            "type": "string",
+                            "description": "Ticker symbol to search for (e.g., 'AAPL', 'MSFT', 'EUR.USD'). For FX pairs use dot notation."
+                        }
+                    },
+                    "required": ["symbol"]
+                },
+                "annotations": {
+                    "title": "Search Contracts",
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": True
+                }
+            },
+            {
+                "name": "get_market_data_snapshot",
+                "description": "Get a real-time market data snapshot for one or more contracts. Returns last price, bid, ask, volume, and other fields. Requires contract IDs (conids) — use search_contract first if you only have a ticker symbol.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "conids": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "List of contract IDs (conids) to get market data for. Use search_contract to find conids from ticker symbols."
+                        },
+                        "fields": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of field IDs to request (e.g., ['31','84','86'] for last/bid/ask). If omitted, returns default fields."
+                        }
+                    },
+                    "required": ["conids"]
+                },
+                "annotations": {
+                    "title": "Get Market Data Snapshot",
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": True
+                }
+            },
+            {
+                "name": "place_order",
+                "description": "Place a BUY or SELL order through Interactive Brokers. Supports stocks (STK), forex (CASH), and other instrument types. For limit orders, a limit_price is required. Orders may require confirmation prompts which are auto-accepted. This is a write operation that will affect your account.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "symbol": {
+                            "type": "string",
+                            "description": "Ticker symbol (e.g., 'AAPL', 'TSLA'). For FX pairs use slash notation (e.g., 'EUR/USD')."
+                        },
+                        "side": {
+                            "type": "string",
+                            "enum": ["BUY", "SELL"],
+                            "description": "Order direction: BUY to go long, SELL to close or go short."
+                        },
+                        "quantity": {
+                            "type": "integer",
+                            "description": "Number of shares, contracts, or units to trade."
+                        },
+                        "order_type": {
+                            "type": "string",
+                            "enum": ["MKT", "LMT", "STP", "TRAIL"],
+                            "description": "Order type: MKT (market, fills immediately at best price), LMT (limit, fills at specified price or better), STP (stop), TRAIL (trailing stop)."
+                        },
+                        "limit_price": {
+                            "type": "number",
+                            "description": "Required for LMT orders. The maximum (BUY) or minimum (SELL) price you are willing to accept."
+                        },
+                        "aux_price": {
+                            "type": "number",
+                            "description": "Auxiliary price for STP orders (the trigger/stop price)."
+                        },
+                        "trailing_amt": {
+                            "type": "number",
+                            "description": "Trailing amount for TRAIL orders."
+                        },
+                        "trailing_type": {
+                            "type": "string",
+                            "enum": ["amt", "pct"],
+                            "description": "Trailing type: 'amt' for fixed dollar amount, 'pct' for percentage."
+                        },
+                        "all_or_none": {
+                            "type": "boolean",
+                            "description": "If true, the order must fill completely or not at all."
+                        },
+                        "outside_rth": {
+                            "type": "boolean",
+                            "description": "If true, allows execution outside regular trading hours (pre-market/after-hours)."
+                        }
                     },
                     "required": ["symbol", "side", "quantity", "order_type"]
+                },
+                "annotations": {
+                    "title": "Place Order",
+                    "readOnlyHint": False,
+                    "destructiveHint": False,
+                    "openWorldHint": True
+                }
+            },
+            {
+                "name": "modify_order",
+                "description": "Modify an existing open order. You can change the quantity, price, order type, or side. Requires the order_id from get_orders and the updated order details. Only works on orders that have not yet been fully filled.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "order_id": {
+                            "type": "string",
+                            "description": "The order ID to modify (from get_orders results)."
+                        },
+                        "symbol": {
+                            "type": "string",
+                            "description": "Ticker symbol for the order."
+                        },
+                        "side": {
+                            "type": "string",
+                            "enum": ["BUY", "SELL"],
+                            "description": "Updated order direction."
+                        },
+                        "quantity": {
+                            "type": "integer",
+                            "description": "Updated number of shares/contracts."
+                        },
+                        "order_type": {
+                            "type": "string",
+                            "enum": ["MKT", "LMT"],
+                            "description": "Updated order type."
+                        },
+                        "limit_price": {
+                            "type": "number",
+                            "description": "Updated limit price (required if order_type is LMT)."
+                        }
+                    },
+                    "required": ["order_id", "symbol", "side", "quantity", "order_type"]
+                },
+                "annotations": {
+                    "title": "Modify Order",
+                    "readOnlyHint": False,
+                    "destructiveHint": False,
+                    "openWorldHint": False
                 }
             },
             {
                 "name": "cancel_order",
-                "description": "Cancel an existing order",
+                "description": "Cancel a pending/open order by its order ID. The order must not be fully filled. Get the order_id from the get_orders tool. This action cannot be undone.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {"order_id": {"type": "string"}},
+                    "properties": {
+                        "order_id": {
+                            "type": "string",
+                            "description": "The order ID to cancel (from get_orders results)."
+                        }
+                    },
                     "required": ["order_id"]
+                },
+                "annotations": {
+                    "title": "Cancel Order",
+                    "readOnlyHint": False,
+                    "destructiveHint": True,
+                    "openWorldHint": False
                 }
             }
         ]
@@ -188,7 +386,12 @@ class IBKRGatewayClient:
                 arguments.get('side'),
                 arguments.get('quantity'),
                 arguments.get('order_type', 'MKT'),
-                arguments.get('limit_price')
+                arguments.get('limit_price'),
+                aux_price=arguments.get('aux_price'),
+                trailing_amt=arguments.get('trailing_amt'),
+                trailing_type=arguments.get('trailing_type'),
+                all_or_none=arguments.get('all_or_none'),
+                outside_rth=arguments.get('outside_rth')
             )
         elif name == "cancel_order":
             return self.cancel_order(arguments.get('order_id'))
@@ -203,6 +406,11 @@ class IBKRGatewayClient:
             )
         elif name == "search_contract":
             return self.search_contract(arguments.get('symbol'))
+        elif name == "get_market_data_snapshot":
+            return self.get_market_data_snapshot(
+                arguments.get('conids', []),
+                arguments.get('fields')
+            )
         else:
             return {"error": f"Tool not found: {name}"}
 

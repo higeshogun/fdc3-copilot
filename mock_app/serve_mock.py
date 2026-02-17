@@ -35,98 +35,84 @@ CORS(app)
 pending_trades = {}  # token -> trade_proposal
 
 # ═══════════════════════════════════════════════════════════
-# IBKR TOOLS DEFINITION (OpenAI Function Calling Format)
+# UNIFIED TOOL DEFINITIONS — Single source of truth
 # ═══════════════════════════════════════════════════════════
-IBKR_TOOLS_OPENAI = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_orders",
-            "description": "Get list of current orders from Interactive Brokers",
-            "parameters": {
+
+# The ask_analyst tool definition (only available via the Flask MCP layer)
+ASK_ANALYST_TOOL = {
+    "name": "ask_analyst",
+    "description": "Ask the AI financial analyst a question about your portfolio, market conditions, or trading strategy. The analyst has access to captured FDC3 context logs (UI activity, portfolio snapshots) and can call IBKR tools to retrieve live data. Use this for complex questions that require reasoning over market context, multi-step analysis, or trade recommendations.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The question or request for the analyst (e.g., 'What is my portfolio risk exposure?', 'Should I rebalance?')."
+            },
+            "logs": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "Optional array of FDC3 context log entries captured from the UI. Each entry has origin, type, and data fields."
+            },
+            "config": {
                 "type": "object",
-                "properties": {},
-                "required": []
+                "description": "Optional LLM configuration: provider, key, model, temp, prompt, url."
+            },
+            "enable_trading": {
+                "type": "boolean",
+                "description": "If true (default), the analyst can invoke IBKR tools to fetch live data or propose trades."
             }
-        }
+        },
+        "required": ["query"]
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_positions",
-            "description": "Get current portfolio positions from Interactive Brokers",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_account_summary",
-            "description": "Get account balance and buying power from Interactive Brokers",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "place_order",
-            "description": "Place a BUY or SELL order (requires user confirmation before execution)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "The ticker symbol (e.g., AAPL, EUR/USD)"
-                    },
-                    "side": {
-                        "type": "string",
-                        "enum": ["BUY", "SELL"],
-                        "description": "Order side"
-                    },
-                    "quantity": {
-                        "type": "number",
-                        "description": "Number of shares/contracts"
-                    },
-                    "order_type": {
-                        "type": "string",
-                        "enum": ["MARKET", "LIMIT"],
-                        "description": "Order type"
-                    },
-                    "price": {
-                        "type": "number",
-                        "description": "Limit price (required for LIMIT orders)"
-                    }
-                },
-                "required": ["symbol", "side", "quantity", "order_type"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "cancel_order",
-            "description": "Cancel a pending order",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "order_id": {
-                        "type": "string",
-                        "description": "The order ID to cancel"
-                    }
-                },
-                "required": ["order_id"]
-            }
-        }
+    "annotations": {
+        "title": "Ask AI Analyst",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "openWorldHint": True
     }
-]
+}
+
+
+def get_all_mcp_tools():
+    """Get the complete list of MCP tools from the gateway client + ask_analyst.
+    This is the single source of truth for all tool definitions."""
+    tools = mcp_client.list_tools()
+    tools.append(ASK_ANALYST_TOOL)
+    return tools
+
+
+def tools_to_openai_format(tools=None):
+    """Convert MCP tool definitions to OpenAI function calling format."""
+    if tools is None:
+        tools = get_all_mcp_tools()
+    return [{
+        "type": "function",
+        "function": {
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t.get("inputSchema", {})
+        }
+    } for t in tools]
+
+
+def tools_to_gemini_format(tools=None):
+    """Convert MCP tool definitions to Gemini function declaration format."""
+    if tools is None:
+        tools = get_all_mcp_tools()
+    # Filter to only tools useful for the Gemini analyst flow
+    analyst_tool_names = {
+        'get_positions', 'get_account_summary', 'get_orders',
+        'place_order', 'cancel_order'
+    }
+    filtered = [t for t in tools if t['name'] in analyst_tool_names]
+    return [{
+        "function_declarations": [{
+            "name": t["name"],
+            "description": t["description"],
+            "parameters": t.get("inputSchema", {})
+        } for t in filtered]
+    }]
 
 # ═══════════════════════════════════════════════════════════
 # IBKR PROXY CONFIGURATION
@@ -983,7 +969,7 @@ def mcp_messages_endpoint():
             }
             
         elif method == "tools/list":
-            tools = mcp_client.list_tools()
+            tools = get_all_mcp_tools()
             response = {
                 "jsonrpc": "2.0",
                 "id": msg_id,
@@ -991,7 +977,10 @@ def mcp_messages_endpoint():
                     "tools": [{
                         "name": t["name"],
                         "description": t["description"],
-                        "inputSchema": t.get("inputSchema", {})
+                        "inputSchema": t.get("inputSchema", {}),
+                        **({
+                            "annotations": t["annotations"]
+                        } if "annotations" in t else {})
                     } for t in tools]
                 }
             }
@@ -1095,91 +1084,9 @@ def mcp_messages_endpoint():
 # TRADING TOOLS FOR GEMINI FUNCTION CALLING
 # ═══════════════════════════════════════════════════════════
 
-TRADING_TOOLS = [
-    {
-        "name": "place_order",
-        "description": "Place a stock order through Interactive Brokers. This will propose the trade for user confirmation before execution.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "symbol": {
-                    "type": "string",
-                    "description": "Stock symbol (e.g., AAPL, MSFT, TSLA)"
-                },
-                "side": {
-                    "type": "string",
-                    "enum": ["BUY", "SELL"],
-                    "description": "Order side: BUY or SELL"
-                },
-                "quantity": {
-                    "type": "integer",
-                    "description": "Number of shares to trade"
-                },
-                "order_type": {
-                    "type": "string",
-                    "enum": ["MKT", "LMT"],
-                    "description": "Order type: MKT (market) or LMT (limit)"
-                },
-                "limit_price": {
-                    "type": "number",
-                    "description": "Limit price (required for LMT orders)"
-                }
-            },
-            "required": ["symbol", "side", "quantity", "order_type"]
-        }
-    },
-    {
-        "name": "get_positions",
-        "description": "Get current portfolio positions from Interactive Brokers account",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    },
-    {
-        "name": "get_account_summary",
-        "description": "Get account balance, buying power, and other account metrics from Interactive Brokers",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    },
-    {
-        "name": "cancel_order",
-        "description": "Cancel a pending order by its order ID",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "order_id": {
-                    "type": "string",
-                    "description": "The order ID to cancel"
-                }
-            },
-            "required": ["order_id"]
-        }
-    },
-    {
-        "name": "get_orders",
-        "description": "Get list of current/recent orders from Interactive Brokers",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-    }
-]
-
-def convert_tools_to_gemini_format():
-    """Convert TRADING_TOOLS to Gemini function declaration format"""
-    return [{
-        "function_declarations": [{
-            "name": tool["name"],
-            "description": tool["description"],
-            "parameters": tool["parameters"]
-        } for tool in TRADING_TOOLS]
-    }]
+# TRADING_TOOLS and convert_tools_to_gemini_format are now consolidated
+# into get_all_mcp_tools(), tools_to_openai_format(), and tools_to_gemini_format()
+# defined at the top of this file alongside ASK_ANALYST_TOOL.
 
 def execute_tool_call(tool_name: str, arguments: dict) -> dict:
     """
@@ -1337,7 +1244,7 @@ def gemini_call(prompt, api_key, model, temp, system_prompt, stream=False, enabl
 
         # Add function calling tools if enabled
         if enable_tools:
-            payload["tools"] = convert_tools_to_gemini_format()
+            payload["tools"] = tools_to_gemini_format()
 
         resp = requests.post(url, json=payload, timeout=60, stream=stream)
         if resp.status_code == 200:
@@ -1652,7 +1559,7 @@ RULES:
                     except Exception:
                         return {"analysis": f"IBKR Data:\n```json\n{tool_result_str}\n```"}
 
-                tools = IBKR_TOOLS_OPENAI if enable_trading else None
+                tools = tools_to_openai_format() if enable_trading else None
                 message = openai_call(prompt, api_key, model_name, temp, enhanced_system_prompt, base_url, tools=tools)
                 log_to_file(f"[Local LLM] Full response: {json.dumps(message, indent=2)}")
 
